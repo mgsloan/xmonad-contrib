@@ -482,6 +482,7 @@ eventLoop action = do
                         then lookupString $ asKeyEvent e
                         else return (Nothing, "")
               return (ks,s,ev)
+  when (keysym == Just xK_Escape) quit
   action (fromMaybe xK_VoidSymbol keysym,string) event
   gets done >>= flip unless (eventLoop handle)
 
