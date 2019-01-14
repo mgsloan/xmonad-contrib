@@ -489,11 +489,15 @@ eventLoop action = do
 -- | Removes numlock and capslock from a keymask.
 -- Duplicate of cleanMask from core, but in the
 -- XP monad instead of X.
+--
+-- NOTE: I (mgsloan) have modified this to only let through ctrlMask
+-- or mod1Mask. This is because there are cases where the mask
+-- accidentally gets set to something else.  In particular, there's an
+-- unfortunate bug on my laptop where the state is 0x100 indicating
+-- the left mouse button being held down.  This mask would cause
+-- prompt actions like backspace and enter to fail.
 cleanMask :: KeyMask -> XP KeyMask
-cleanMask msk = do
-  numlock <- gets numlockMask
-  let highMasks = 1 `shiftL` 12 - 1
-  return (complement (numlock .|. lockMask) .&. msk .&. highMasks)
+cleanMask msk = return (msk .&. (controlMask .|. mod1Mask))
 
 -- Main event handler
 handle :: KeyStroke -> Event -> XP ()
