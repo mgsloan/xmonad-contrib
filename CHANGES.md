@@ -13,6 +13,16 @@
 
 ### Bug Fixes and Minor Changes
 
+  * `XMonad.Hooks.ManageDebug`
+
+    - `debugManageHookOn` now sends the debug output to `$XMONAD_XMESSAGE`
+      (default `xmessage`).
+
+    - `manageDebug'` has been added to stream debug output to a specified
+      `Handle`. It takes a flag passed to `manageDebugLogHook` telling it
+      whether to close the `Handle` afterward or not. (It's done this way
+      so that the visible API doesn't change beyond addition of this function.)
+
   * `XMonad.Actions.Repeatable`
 
     - Generalised the `repeatable` family of functions with new `concludable`
