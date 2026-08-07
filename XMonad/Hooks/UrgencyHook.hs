@@ -445,7 +445,10 @@ instance UrgencyHook BorderUrgencyHook where
   urgencyHook BorderUrgencyHook { urgencyBorderColor = cs } w =
     withDisplay $ \dpy ->
       case parseColorMaybe cs of
-        Just c  -> setWindowBorderWithFallback dpy w cs c
+        -- The fallback is unreachable: setWindowBorderWithFallback parses the
+        -- same string this just parsed, so it only reaches its fallback when
+        -- this branch was not taken.  Zero is as good as anything.
+        Just _  -> setWindowBorderWithFallback dpy w cs 0
         Nothing -> io $ hPutStrLn stderr $ concat ["Warning: bad urgentBorderColor "
                                                   ,show cs
                                                   ," in BorderUrgencyHook"

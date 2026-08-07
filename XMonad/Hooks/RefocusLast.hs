@@ -153,13 +153,19 @@ refocusLastLayoutHook = ModifiedLayout RefocusLastLayoutHook
 --   construct an event hook that runs iff the core xmonad event handler will
 --   unmanage the window, and which shifts focus to the last focused window on
 --   the appropriate workspace if desired.
+-- Upstream matches two events here and both branches end in the same call.
+-- The UnmapEvent one exists only to tell a real unmap from the synthetic one
+-- xmonad sends itself while moving a window between workspaces, which is what
+-- the waitingUnmap bookkeeping counts -- an X11 problem with an X11 solution.
+--
+-- river has neither event and needs neither: a window is either managed or
+-- gone, hiding it for a workspace switch is not an unmap, and
+-- river_window_v1.closed is sent once when it really has gone.  So the
+-- surviving branch is the one that was doing the work.
 refocusLastWhen :: Query Bool -> Event -> X All
 refocusLastWhen p event = All True <$ case event of
-  UnmapEvent { ev_send_event = synth, ev_window = w } -> do
-    e <- gets (fromMaybe 0 . M.lookup w . waitingUnmap)
-    when (synth || e == 0) (refocusLast w)
-  DestroyWindowEvent {                ev_window = w } -> refocusLast w
-  _                                                   -> return ()
+  DestroyWindowEvent { ev_window = w } -> refocusLast w
+  _                                    -> return ()
   where
     refocusLast w = whenX (runQuery p w) . withWindowSet $ \ws ->
       whenJust (W.findTag w ws) $ \tag ->

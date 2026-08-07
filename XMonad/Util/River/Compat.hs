@@ -91,7 +91,7 @@ import Graphics.Rendering.Cairo (withImageSurfaceForData)
 import qualified Graphics.Rendering.Cairo as C
 
 import XMonad.River.Connection (Connection)
-import XMonad.River.Types (Dimension, Position, Rectangle (..), Window)
+import XMonad.River.Types (Dimension, Pixel, Position, Rectangle (..), Window)
 import XMonad.River.Wire (ObjectId (..))
 import qualified XMonad.River.Surface as R
 
@@ -130,7 +130,10 @@ type Pixmap = Drawable
 -- has neither, so this is the colour itself: @0xAARRGGBB@.  Every contrib
 -- caller obtains one from a string via @stringToPixel@, so nothing notices the
 -- difference.
-type Pixel = Word32
+-- Re-exported from XMonad rather than defined here, now that the backend has
+-- it: a config reaches Pixel through @import XMonad@ on the X11 build, so it
+-- has to be reachable the same way here, and two synonyms for the same thing
+-- is one more than is useful.
 
 data Backing
   = OnScreen R.Surface
