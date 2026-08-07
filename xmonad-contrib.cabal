@@ -90,7 +90,9 @@ library
         build-depends: X11-xft >= 0.2
         cpp-options: -DXFT
 
-    exposed-modules:    XMonad.Actions.AfterDrag
+    build-depends:      cairo, pango
+    exposed-modules:    XMonad.Util.River.Draw
+                        XMonad.Actions.AfterDrag
                         XMonad.Actions.BluetileCommands
                         XMonad.Actions.Commands
                         XMonad.Actions.ConstrainedResize
