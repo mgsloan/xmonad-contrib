@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {- |
 Module      :  XMonad.Util.XSelection
 Description :  A module for accessing and manipulating the primary selection.
@@ -9,27 +8,55 @@ Maintainer  : Gwern Branwen <gwern0@gmail.com>
 Stability   :  unstable
 Portability :  unportable
 
-A module for accessing and manipulating X Window's mouse selection (the buffer used in copy and pasting).
-'getSelection' is an adaptation of Hxsel.hs and Hxput.hs from the XMonad-utils, available:
+Access to the selection and the clipboard, via @wl-paste@.
 
-> $ darcs get <http://gorgias.mine.nu/repos/xmonad-utils>
+The river implementation.  Every signature is upstream's, which is unusually
+easy here: nothing in this module's interface mentions an X11 type, so a
+change of mechanism is invisible to callers.  What changes is everything
+behind it.
+
+== Why an external program
+
+Upstream opens its own display, creates a window, and does a synchronous
+selection transfer -- a small X client hiding inside a function.  The direct
+translation would be @wl_data_device@, and it does not work: the protocol says
+a @selection@ event is delivered
+
+> immediately before receiving keyboard focus and when a new selection is set
+> while the client has keyboard focus
+
+and a window manager has no keyboard-focused surface.  It is not in the focus
+chain at all, so a @wl_data_device@ it bound would simply never be told about
+a selection.  The primary selection is worse still: it is
+@zwp_primary_selection_v1@, an entirely separate protocol.
+
+@wl-paste@ solves this by being a real client that can take focus for the
+instant it needs to.  Shelling out to it is what every Wayland tool does, and
+it is the same approach the prototype took for prompts.
+
+== The cost
+
+A runtime dependency on @wl-clipboard@, which is not a build dependency and so
+cannot be checked for at compile time.  If it is missing these functions say
+so once, on stderr, rather than returning an empty string -- a paste binding
+that quietly does nothing is indistinguishable from a broken config, and the
+backend is the last place anyone would look.
+
 -}
 
 module XMonad.Util.XSelection (  -- * Usage
-                                 -- $usage
                                  getSelection,
                                  getClipboard,
-                                 getSecondarySelection,
                                  promptSelection,
                                  safePromptSelection,
                                  transformPromptSelection,
                                  transformSafePromptSelection) where
 
-import Control.Exception as E (catch,SomeException(..))
+import Control.Exception as E (SomeException (..), try)
+import System.Process (readProcess)
 import XMonad
+import XMonad.River (warnUnimplemented)
 import XMonad.Util.Run (safeSpawn, unsafeSpawn)
-
-import Codec.Binary.UTF8.String (decode)
 
 {- $usage
    Add @import XMonad.Util.XSelection@ to the top of Config.hs
@@ -45,67 +72,38 @@ import Codec.Binary.UTF8.String (decode)
    > prompt_extra_bindings = [
    >   ((mod1Mask, xK_v), getClipboard >>= insertString) -- Alt+v to paste
    >   ]
-   > 
-   > prompt_conf = def {
-   >   promptKeymap =
-   >     foldl (\m (k, a) -> M.insert k a m) defaultXPKeymap prompt_extra_bindings,
-   >   -- other prompt config
-   > }
 
-   Next use it to construct a prompt, for example in your bindings:
+   Requires @wl-clipboard@ to be installed.
+-}
 
-   > ("M-p", shellPrompt prompt_conf),
+-- | Read one selection through @wl-paste@.
+--
+-- Trailing newlines are suppressed: @wl-paste@ adds one by default, which
+-- would otherwise end up in every URL handed to a browser.
+wlPaste :: [String] -> IO String
+wlPaste args = do
+  r <- E.try (readProcess "wl-paste" ("--no-newline" : args) "")
+  case r of
+    Right s -> pure s
+    Left (SomeException _) -> do
+      warnUnimplemented "XMonad.Util.XSelection"
+        "wl-paste could not be run, so the selection is empty.  Install \
+        \wl-clipboard; a window manager cannot read the selection itself, \
+        \because Wayland only offers it to the client holding keyboard focus."
+      pure ""
 
-   Future improvements for XSelection:
-
-   * More elaborate functionality: Emacs' registers are nice; if you
-      don't know what they are, see <http://www.gnu.org/software/emacs/manual/html_node/emacs/Registers.html#Registers>
-
-   WARNING: these functions are fundamentally implemented incorrectly and may,
-   among other possible failure modes, deadlock or crash. For details, see
-   <http://code.google.com/p/xmonad/issues/detail?id=573>.
-   (These errors are generally very rare in practice, but still exist.) -}
-
--- Query the content of a selection in X
-getSelectionNamed :: String -> IO String
-getSelectionNamed sel_name = do
-  dpy <- openDisplay ""
-  let dflt = defaultScreen dpy
-  rootw  <- rootWindow dpy dflt
-  win <- createSimpleWindow dpy rootw 0 0 1 1 0 0 0
-  p <- internAtom dpy sel_name True
-  ty <- E.catch
-               (E.catch
-                     (internAtom dpy "UTF8_STRING" False)
-                     (\(E.SomeException _) -> internAtom dpy "COMPOUND_TEXT" False))
-             (\(E.SomeException _) -> internAtom dpy "sTring" False)
-  clp <- internAtom dpy "BLITZ_SEL_STRING" False
-  xConvertSelection dpy p ty clp win currentTime
-  allocaXEvent $ \e -> do
-    nextEvent dpy e
-    ev <- getEvent e
-    result <- if ev_event_type ev == selectionNotify
-                 then do res <- getWindowProperty8 dpy clp win
-                         return $ decode . maybe [] (map fromIntegral) $ res
-                 else return ""
-    destroyWindow dpy win
-    closeDisplay dpy
-    return result
-
--- | Returns a String corresponding to the current mouse selection in X;
---   if there is none, an empty string is returned.
+-- | The primary selection -- what a middle-click pastes.
 getSelection :: MonadIO m => m String
-getSelection = io $ getSelectionNamed "PRIMARY"
+getSelection = io (wlPaste ["--primary"])
 
--- | Returns a String corresponding to the current clipboard in X;
---   if there is none, an empty string is returned.
+-- | The clipboard -- what an explicit copy puts there.
 getClipboard :: MonadIO m => m String
-getClipboard = io $ getSelectionNamed "CLIPBOARD"
+getClipboard = io (wlPaste [])
 
--- | Returns a String corresponding to the secondary selection in X;
---   if there is none, an empty string is returned.
-getSecondarySelection :: MonadIO m => m String
-getSecondarySelection = io $ getSelectionNamed "SECONDARY"
+-- Upstream also offers getSecondarySelection.  X11 had three selections;
+-- Wayland has two, and there is no secondary to read.  It is absent rather
+-- than returning "", so code that wants it fails at the call site instead of
+-- silently pasting nothing.
 
 {- | A wrapper around 'getSelection'. Makes it convenient to run a program with the current selection as an argument.
   This is convenient for handling URLs, in particular. For example, in your Config.hs you could bind a key to

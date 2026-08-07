@@ -30,3 +30,4 @@ stack.yaml.lock
 # nix artifacts
 result
 flake.lock
+.survey.log

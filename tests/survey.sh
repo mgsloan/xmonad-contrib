@@ -12,6 +12,16 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 stack build xmonad >/dev/null 2>&1
-log=$(mktemp); trap 'rm -f "$log"' EXIT
+
+# A clean build of contrib, always.  Incremental builds only recompile what
+# failed last time -- a module that succeeded produces an object file and is
+# then silent -- so the log undercounts everything that works, and the survey
+# reports a collapse that has not happened.  Ten minutes is worth a number
+# that means something.
+stack clean xmonad-contrib >/dev/null 2>&1
+# Kept rather than a mktemp: when the numbers look wrong the log is the only
+# way to find out why, and discarding it means re-running a ten-minute build.
+log=.survey.log
 stack build xmonad-contrib:lib --ghc-options="-fkeep-going" > "$log" 2>&1
 python3 tests/mksurvey.py "$log"
+echo "build log: $log"
