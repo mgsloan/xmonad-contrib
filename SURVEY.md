@@ -6,74 +6,81 @@ does not stop the run.
 
 | | count |
 | --- | --- |
-| compiled | **180** |
-| failed | 57 |
-| skipped behind a failure | 97 |
+| compiled | **205** |
+| failed | 64 |
+| skipped behind a failure | 65 |
 | total | 334 |
 
 The skipped ones are **unmeasured, not known-bad**: GHC never attempted them,
 because a module they import failed first. The true number that would compile
-is somewhere between 180 and 277.
+is somewhere between 205 and 270.
 
 Regenerate with `tests/survey.sh` after rebuilding `xmonad`.
 
 ## Failing modules, by cause
 
-### other — 26 modules
+### other — 29 modules
 
 - `XMonad.Actions.FlexibleResize` (3) — Variable not in scope:
 - `XMonad.Actions.FloatKeys` (4) — Variable not in scope:
 - `XMonad.Actions.FloatSnap` (8) — Variable not in scope:
-- `XMonad.Actions.GroupNavigation` (1) — • No instance for ‘NFData XMonad.River.Wire.ObjectId’
+- `XMonad.Actions.GridSelect` (1) — ?
+- `XMonad.Actions.GroupNavigation` (1) — ?
+- `XMonad.Actions.MouseResize` (2) — Not in scope: data constructor ‘ButtonEvent’
 - `XMonad.Actions.Navigation2D` (1) — Variable not in scope:
-- `XMonad.Actions.NoBorders` (2) — Variable not in scope:
-- `XMonad.Actions.Repeatable` (1) — ?
 - `XMonad.Actions.TiledWindowDragging` (3) — Variable not in scope:
+- `XMonad.Actions.TopicSpace` (1) — ?
 - `XMonad.Actions.UpdatePointer` (5) — Variable not in scope:
 - `XMonad.Config.Prime` (6) — Not in scope: type constructor or class ‘EventMask’
-- `XMonad.Hooks.BorderPerWindow` (1) — ?
 - `XMonad.Hooks.FadeInactive` (4) — Variable not in scope: getAtom :: String -> X t2
 - `XMonad.Hooks.FloatConfigureReq` (1) — Not in scope: data constructor ‘ConfigureRequestEvent’
-- `XMonad.Hooks.ServerMode` (3) — ?
-- `XMonad.Hooks.SetWMName` (1) — ?
+- `XMonad.Hooks.PositionStoreHooks` (1) — ?
+- `XMonad.Hooks.ScreenCorners` (1) — ?
 - `XMonad.Hooks.WorkspaceByPos` (1) — Variable not in scope:
 - `XMonad.Layout.BinarySpacePartition` (1) — Variable not in scope:
+- `XMonad.Layout.BorderResize` (4) — Not in scope: type constructor or class ‘Glyph’
 - `XMonad.Layout.DragPane` (3) — Not in scope: data constructor ‘ButtonEvent’
-- `XMonad.Layout.NoBorders` (1) — Variable not in scope:
-- `XMonad.Layout.TrackFloating` (1) — ?
-- `XMonad.Layout.VoidBorders` (1) — ?
+- `XMonad.Layout.IndependentScreens` (1) — ?
+- `XMonad.Layout.LayoutScreens` (1) — ?
+- `XMonad.Layout.Tabbed` (3) — Not in scope: data constructor ‘ButtonEvent’
+- `XMonad.Layout.TrackFloating` (1) — Variable not in scope:
+- `XMonad.Layout.WindowNavigation` (1) — ?
 - `XMonad.Prompt.Input` (1) — Variable not in scope:
+- `XMonad.Prompt.OrgMode` (1) — ?
 - `XMonad.Prompt.RunOrRaise` (2) — Variable not in scope: getAtom :: String -> m t0
 - `XMonad.Util.ExclusiveScratchpads` (1) — ?
 - `XMonad.Util.RemoteWindows` (7) — Variable not in scope: getAtom :: String -> X t2
-- `XMonad.Util.StringProp` (1) — ?
 
-### missing module or export — 8 modules
+### missing module or export — 10 modules
 
+- `XMonad.Actions.Repeatable` (1) — Could not load module ‘Graphics.X11.Xlib.Extras’.
+- `XMonad.Config.Monad` (2) — Could not find module ‘Data.Accessor’.
 - `XMonad.Hooks.DebugKeyEvents` (2) — Could not load module ‘Graphics.X11.Xlib’.
-- `XMonad.Hooks.UrgencyHook` (1) — Module ‘XMonad.Util.WindowProperties’ does not export ‘getProp32’.
+- `XMonad.Hooks.StatusBar.WorkspaceScreen` (1) — Could not load module ‘Graphics.X11.Xrandr’.
+- `XMonad.Layout.LayoutHints` (2) — Module ‘XMonad’ does not export ‘propertyNotify’.
 - `XMonad.Layout.MouseResizableTile` (1) — Could not load module ‘Graphics.X11’.
-- `XMonad.Prompt.OrgMode` (1) — Module ‘XMonad.Prompt’ does not export ‘mkXPromptWithReturn’.
 - `XMonad.Util.Cursor` (1) — Could not load module ‘Graphics.X11.Xlib.Cursor’.
 - `XMonad.Util.NoTaskbar` (3) — Could not load module ‘Graphics.X11.Xlib’.
 - `XMonad.Util.Paste` (3) — Module ‘XMonad’ does not export ‘theRoot’.
 - `XMonad.Util.Ungrab` (1) — Module ‘XMonad.Operations’ does not export ‘unGrab’.
+
+### X window properties — 7 modules
+
+- `XMonad.Actions.ShowText` (4) — Not in scope: type constructor or class ‘Atom’
+- `XMonad.Hooks.SetWMName` (1) — Not in scope: type constructor or class ‘Atom’
+- `XMonad.Hooks.TaffybarPagerHints` (5) — Not in scope: type constructor or class ‘Atom’
+- `XMonad.Hooks.XPropManage` (3) — Not in scope: type constructor or class ‘Atom’
+- `XMonad.Util.DebugWindow` (11) — Not in scope: type constructor or class ‘Atom’
+- `XMonad.Util.StringProp` (1) — Not in scope: type constructor or class ‘Atom’
+- `XMonad.Util.WindowState` (3) — Variable not in scope: stringProperty :: String -> Query String
 
 ### Xlib drawing and display — 5 modules
 
 - `XMonad.Actions.TreeSelect` (28) — Not in scope: type constructor or class ‘Pixel’
 - `XMonad.Hooks.Qubes` (8) — Not in scope: type constructor or class ‘Pixel’
 - `XMonad.Hooks.ShowWName` (3) — Variable not in scope: openDisplay :: String -> IO t0
-- `XMonad.Layout.WindowNavigation` (1) — Not in scope: type constructor or class ‘Pixel’
+- `XMonad.Layout.DecorationEx.Common` (2) — Not in scope: type constructor or class ‘Pixmap’
 - `XMonad.Util.Replace` (27) — Variable not in scope: openDisplay :: String -> IO t21
-
-### X window properties — 5 modules
-
-- `XMonad.Actions.ShowText` (4) — Not in scope: type constructor or class ‘Atom’
-- `XMonad.Hooks.TaffybarPagerHints` (5) — Not in scope: type constructor or class ‘Atom’
-- `XMonad.Hooks.XPropManage` (3) — Not in scope: type constructor or class ‘Atom’
-- `XMonad.Util.DebugWindow` (11) — Not in scope: type constructor or class ‘Atom’
-- `XMonad.Util.WindowState` (3) — Variable not in scope: stringProperty :: String -> Query String
 
 ### raw X events — 5 modules
 
@@ -81,7 +88,7 @@ Regenerate with `tests/survey.sh` after rebuilding `xmonad`.
 - `XMonad.Hooks.Minimize` (3) — Not in scope: data constructor ‘ClientMessageEvent’
 - `XMonad.Hooks.OnPropertyChange` (3) — Not in scope: data constructor ‘PropertyEvent’
 - `XMonad.Hooks.RefocusLast` (2) — Not in scope: data constructor ‘UnmapEvent’
-- `XMonad.Hooks.ScreenCorners` (1) — Not in scope: data constructor ‘CrossingEvent’
+- `XMonad.Hooks.ServerMode` (3) — Not in scope: data constructor ‘ClientMessageEvent’
 
 ### small missing names — 4 modules
 
@@ -95,23 +102,35 @@ Regenerate with `tests/survey.sh` after rebuilding `xmonad`.
 - `XMonad.Actions.EasyMotion` (1) — Not in scope: ‘theRoot’
 - `XMonad.Actions.MouseGestures` (2) — Variable not in scope: theRoot :: XConf -> t0
 - `XMonad.Actions.UpKeys` (5) — Not in scope: ‘theRoot’
-- `XMonad.Layout.LayoutScreens` (1) — Variable not in scope: theRoot :: XConf -> Window
+- `XMonad.Hooks.StatusBar` (5) — Variable not in scope: theRoot :: XConf -> t3
 
 ## Skipped modules, by what blocks them
 
-### `XMonad.Hooks.UrgencyHook` — 52 modules
+### `XMonad.Actions.GridSelect` — 5 modules
 
-`XMonad.Actions.CopyWindow`, `XMonad.Actions.DynamicWorkspaceGroups`, `XMonad.Actions.GridSelect`, `XMonad.Actions.LinkWorkspaces`, `XMonad.Actions.MouseResize`, `XMonad.Actions.Profiles`, `XMonad.Actions.TopicSpace`, `XMonad.Actions.WindowBringer`, `XMonad.Actions.WindowMenu`, `XMonad.Hooks.DynamicBars`, `XMonad.Hooks.DynamicIcons`, `XMonad.Hooks.DynamicLog`, `XMonad.Hooks.PositionStoreHooks`, `XMonad.Hooks.StatusBar`, `XMonad.Hooks.StatusBar.PP`, `XMonad.Hooks.StatusBar.WorkspaceScreen`, `XMonad.Layout.BorderResize`, `XMonad.Layout.ButtonDecoration`, `XMonad.Layout.Decoration`, `XMonad.Layout.DecorationAddons`, `XMonad.Layout.DecorationEx`, `XMonad.Layout.DecorationEx.Common`, `XMonad.Layout.DecorationEx.DwmGeometry`, `XMonad.Layout.DecorationEx.Engine`, `XMonad.Layout.DecorationEx.Geometry`, `XMonad.Layout.DecorationEx.LayoutModifier`, `XMonad.Layout.DecorationEx.TabbedGeometry`, `XMonad.Layout.DecorationEx.TextEngine`, `XMonad.Layout.DecorationEx.Widgets`, `XMonad.Layout.DecorationMadness`, `XMonad.Layout.DwmStyle`, `XMonad.Layout.FixedAspectRatio`, `XMonad.Layout.Groups.Examples`, `XMonad.Layout.Groups.Wmii`, `XMonad.Layout.ImageButtonDecoration`, `XMonad.Layout.IndependentScreens`, `XMonad.Layout.LayoutHints`, `XMonad.Layout.MultiToggle.TabBarDecoration`, `XMonad.Layout.NoFrillsDecoration`, `XMonad.Layout.ResizeScreen`, `XMonad.Layout.SideBorderDecoration`, `XMonad.Layout.SimpleDecoration`, `XMonad.Layout.SimpleFloat`, `XMonad.Layout.TabBarDecoration`, `XMonad.Layout.Tabbed`, `XMonad.Layout.TallMastersCombo`, `XMonad.Layout.WindowSwitcherDecoration`, `XMonad.Prompt.Theme`, `XMonad.Prompt.Window`, `XMonad.Util.ClickableWorkspaces`, `XMonad.Util.Loggers`, `XMonad.Util.Themes`
+`XMonad.Actions.WindowMenu`, `XMonad.Layout.ButtonDecoration`, `XMonad.Layout.DecorationAddons`, `XMonad.Layout.ImageButtonDecoration`, `XMonad.Layout.WindowSwitcherDecoration`
 
 ### `XMonad.Hooks.SetWMName`, `XMonad.Util.Cursor` — 5 modules
 
 `XMonad.Config.Desktop`, `XMonad.Config.Gnome`, `XMonad.Config.Kde`, `XMonad.Config.LXQt`, `XMonad.Config.Xfce`
 
+### `XMonad.Actions.GridSelect`, `XMonad.Layout.DecorationEx.Common` (+1 more) — 5 modules
+
+`XMonad.Layout.DecorationEx`, `XMonad.Layout.DecorationEx.DwmGeometry`, `XMonad.Layout.DecorationEx.TabbedGeometry`, `XMonad.Layout.DecorationEx.TextEngine`, `XMonad.Layout.DecorationEx.Widgets`
+
 ### `XMonad.Actions.Repeatable` — 4 modules
 
 `XMonad.Actions.CycleRecentWS`, `XMonad.Actions.CycleWindows`, `XMonad.Actions.CycleWorkspaceByScreen`, `XMonad.Actions.MostRecentlyUsed`
 
-### `XMonad.Hooks.RefocusLast`, `XMonad.Hooks.UrgencyHook` — 3 modules
+### `XMonad.Hooks.SetWMName` — 4 modules
+
+`XMonad.Actions.ToggleFullFloat`, `XMonad.Actions.WorkspaceNames`, `XMonad.Hooks.EwmhDesktops`, `XMonad.Layout.Fullscreen`
+
+### `XMonad.Hooks.StatusBar` — 3 modules
+
+`XMonad.Actions.Profiles`, `XMonad.Hooks.DynamicBars`, `XMonad.Hooks.DynamicLog`
+
+### `XMonad.Hooks.RefocusLast` — 3 modules
 
 `XMonad.Util.Loggers.NamedScratchpad`, `XMonad.Util.NamedScratchpad`, `XMonad.Util.Scratchpad`
 
@@ -119,13 +138,9 @@ Regenerate with `tests/survey.sh` after rebuilding `xmonad`.
 
 `XMonad.Actions.KeyRemap`, `XMonad.Actions.Prefix`
 
-### `XMonad.Hooks.SetWMName` — 2 modules
+### `XMonad.Hooks.SetWMName`, `XMonad.Hooks.StatusBar` (+2 more) — 2 modules
 
-`XMonad.Actions.ToggleFullFloat`, `XMonad.Hooks.EwmhDesktops`
-
-### `XMonad.Hooks.SetWMName`, `XMonad.Hooks.UrgencyHook` (+3 more) — 2 modules
-
-`XMonad.Config.Droundy`, `XMonad.Config.Example`
+`XMonad.Config.Example`, `XMonad.Config.Sjanssen`
 
 ### `XMonad.Util.DebugWindow` — 2 modules
 
@@ -135,7 +150,7 @@ Regenerate with `tests/survey.sh` after rebuilding `xmonad`.
 
 `XMonad.Hooks.FadeWindows`, `XMonad.Layout.Monitor`
 
-### `XMonad.Hooks.UrgencyHook`, `XMonad.Layout.WindowNavigation` — 2 modules
+### `XMonad.Layout.Tabbed`, `XMonad.Layout.WindowNavigation` — 2 modules
 
 `XMonad.Hooks.WindowSwallowing`, `XMonad.Layout.SubLayouts`
 
@@ -143,37 +158,49 @@ Regenerate with `tests/survey.sh` after rebuilding `xmonad`.
 
 `XMonad.Layout.Combo`, `XMonad.Layout.ComboP`
 
-### `XMonad.Hooks.SetWMName`, `XMonad.Hooks.UrgencyHook` — 1 modules
+### `XMonad.Actions.GridSelect`, `XMonad.Layout.DecorationEx.Common` — 2 modules
 
-`XMonad.Actions.WorkspaceNames`
+`XMonad.Layout.DecorationEx.Engine`, `XMonad.Layout.DecorationEx.LayoutModifier`
 
-### `XMonad.Hooks.ServerMode`, `XMonad.Hooks.UrgencyHook` (+1 more) — 1 modules
+### `XMonad.Actions.MouseResize` — 2 modules
+
+`XMonad.Layout.DecorationMadness`, `XMonad.Layout.SimpleFloat`
+
+### `XMonad.Layout.Tabbed` — 2 modules
+
+`XMonad.Layout.Groups.Examples`, `XMonad.Layout.Groups.Wmii`
+
+### `XMonad.Actions.TopicSpace` — 1 modules
+
+`XMonad.Actions.DynamicWorkspaceGroups`
+
+### `XMonad.Layout.IndependentScreens` — 1 modules
+
+`XMonad.Actions.LinkWorkspaces`
+
+### `XMonad.Actions.MouseResize`, `XMonad.Hooks.ServerMode` (+2 more) — 1 modules
 
 `XMonad.Config.Arossato`
 
-### `XMonad.Hooks.CurrentWorkspaceOnTop`, `XMonad.Hooks.Minimize` (+7 more) — 1 modules
+### `XMonad.Actions.GridSelect`, `XMonad.Hooks.CurrentWorkspaceOnTop` (+8 more) — 1 modules
 
 `XMonad.Config.Bluetile`
 
-### `XMonad.Hooks.UrgencyHook`, `XMonad.Layout.NoBorders` — 1 modules
+### `XMonad.Hooks.StatusBar`, `XMonad.Layout.IndependentScreens` — 1 modules
 
 `XMonad.Config.Dmwit`
+
+### `XMonad.Hooks.SetWMName`, `XMonad.Layout.DragPane` (+2 more) — 1 modules
+
+`XMonad.Config.Droundy`
 
 ### `XMonad.Hooks.SetWMName`, `XMonad.Util.Cursor` (+1 more) — 1 modules
 
 `XMonad.Config.Mate`
 
-### (no failing import found) — 1 modules
-
-`XMonad.Config.Monad`
-
-### `XMonad.Hooks.FadeInactive`, `XMonad.Hooks.RefocusLast` (+3 more) — 1 modules
+### `XMonad.Hooks.FadeInactive`, `XMonad.Hooks.RefocusLast` (+2 more) — 1 modules
 
 `XMonad.Config.Saegesser`
-
-### `XMonad.Hooks.SetWMName`, `XMonad.Hooks.UrgencyHook` (+2 more) — 1 modules
-
-`XMonad.Config.Sjanssen`
 
 ### `XMonad.Hooks.DebugKeyEvents`, `XMonad.Util.DebugWindow` — 1 modules
 
@@ -183,7 +210,7 @@ Regenerate with `tests/survey.sh` after rebuilding `xmonad`.
 
 `XMonad.Hooks.DynamicProperty`
 
-### `XMonad.Actions.FloatKeys`, `XMonad.Hooks.UrgencyHook` (+1 more) — 1 modules
+### `XMonad.Actions.FloatKeys`, `XMonad.Util.Grab` — 1 modules
 
 `XMonad.Hooks.Modal`
 
@@ -191,9 +218,9 @@ Regenerate with `tests/survey.sh` after rebuilding `xmonad`.
 
 `XMonad.Hooks.Place`
 
-### `XMonad.Hooks.SetWMName`, `XMonad.Layout.NoBorders` — 1 modules
+### `XMonad.Layout.LayoutHints` — 1 modules
 
-`XMonad.Layout.Fullscreen`
+`XMonad.Layout.FixedAspectRatio`
 
 ### `XMonad.Layout.DragPane`, `XMonad.Layout.WindowNavigation` — 1 modules
 
@@ -203,10 +230,6 @@ Regenerate with `tests/survey.sh` after rebuilding `xmonad`.
 
 `XMonad.Layout.MagicFocus`
 
-### `XMonad.Layout.NoBorders` — 1 modules
-
-`XMonad.Layout.MultiToggle.Instances`
-
 ### `XMonad.Util.RemoteWindows` — 1 modules
 
 `XMonad.Layout.Stoppable`
@@ -215,7 +238,7 @@ Regenerate with `tests/survey.sh` after rebuilding `xmonad`.
 
 `XMonad.Prompt.Email`
 
-### `XMonad.Hooks.FloatConfigureReq`, `XMonad.Hooks.UrgencyHook` — 1 modules
+### `XMonad.Hooks.FloatConfigureReq`, `XMonad.Hooks.StatusBar` — 1 modules
 
 `XMonad.Util.Hacks`
 

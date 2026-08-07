@@ -22,6 +22,23 @@ stack clean xmonad-contrib >/dev/null 2>&1
 # Kept rather than a mktemp: when the numbers look wrong the log is the only
 # way to find out why, and discarding it means re-running a ten-minute build.
 log=.survey.log
+
+# Build against a cabal file that names every module on disk, not the ~180 the
+# checked-in one names.  A library cannot list a module it fails to build, so
+# the real file only ever names what already works -- and surveying that
+# answers "does what works still work", which is not the question.  It can
+# never report a module that has become buildable, which is the entire point.
+#
+# Restored on every exit path, including a Ctrl-C mid-build: leaving the
+# generated file in place would be a working tree whose library silently
+# fails to build.
+cp xmonad-contrib.cabal .survey-cabal.bak
+trap 'mv -f .survey-cabal.bak xmonad-contrib.cabal' EXIT INT TERM
+python3 tests/expose-all.py xmonad-contrib.cabal
+
 stack build xmonad-contrib:lib --ghc-options="-fkeep-going" > "$log" 2>&1
+mv -f .survey-cabal.bak xmonad-contrib.cabal
+trap - EXIT INT TERM
+
 python3 tests/mksurvey.py "$log"
 echo "build log: $log"

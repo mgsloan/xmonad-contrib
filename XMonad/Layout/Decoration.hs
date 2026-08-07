@@ -39,6 +39,7 @@ module XMonad.Layout.Decoration
 import Foreign.C.Types(CInt)
 
 import XMonad
+import XMonad.River (warnUnimplemented)
 import XMonad.Prelude
 import qualified XMonad.StackSet as W
 import XMonad.Hooks.UrgencyHook
@@ -299,33 +300,59 @@ instance (DecorationStyle ds Window, Shrinker s) => LayoutModifier (Decoration d
 
     modifierDescription (Decoration _ _ _ ds) = describeDeco ds
 
--- | By default 'Decoration' handles 'PropertyEvent' and 'ExposeEvent'
--- only.
+-- | By default 'Decoration' redraws a decoration when the title of the window
+-- it belongs to changes.
+--
+-- X11 needed two events for this and river needs one.  A retitled window
+-- arrived as a @PropertyEvent@ on @WM_NAME@ or @_NET_WM_NAME@, which river
+-- reports directly as 'WindowTitleChanged' -- the decoration draws the title,
+-- so it has to be redrawn.
+--
+-- The other was @ExposeEvent@: the X server telling a client that part of its
+-- window had been uncovered and the contents it had forgotten needed painting
+-- again.  Wayland has no such event and needs none.  A surface's buffer is
+-- owned by the client and stays valid; the compositor composites from it
+-- whenever it likes and never asks for a repaint.  So there is nothing to
+-- handle and nothing lost.
 handleEvent :: Shrinker s => s -> Theme -> DecorationState -> Event -> X ()
 handleEvent sh t (DS dwrs fs) e
-    | PropertyEvent {ev_window = w} <- e
+    | WindowTitleChanged {ev_window = w} <- e
     , Just i <- w `elemIndex` map (fst . fst) dwrs      = updateDeco sh t fs (dwrs !! i)
-    | ExposeEvent   {ev_window = w} <- e
-    , Just i <- w `elemIndex` mapMaybe (fst . snd) dwrs = updateDeco sh t fs (dwrs !! i)
 handleEvent _ _ _ _ = return ()
 
 -- | Mouse focus and mouse drag are handled by the same function, this
 -- way we can start dragging unfocused windows too.
+--
+-- __Does nothing under river.__  Clicking a title bar neither focuses nor
+-- drags, and 'decorationCatchClicksHook' -- the button widgets in
+-- "XMonad.Layout.ButtonDecoration" and "XMonad.Layout.DecorationEx" -- never
+-- fires.
+--
+-- The obstacle is that river reports a button press against a
+-- @river_window_v1@, and a decoration is not one.  It is a surface this window
+-- manager draws itself, so river attributes a click on it to no window at all
+-- and the lookup that follows has nothing to find.  X11 had no such
+-- distinction: a decoration was an ordinary child window of the root, and a
+-- ButtonPress on it named it like any other.
+--
+-- Closing this needs the pointer reported in output coordinates on press, so
+-- the click can be tested against the decoration rectangles this module
+-- already knows.  @river_seat_v1.pointer_position@ carries exactly that, but
+-- it is motion rather than press, and @river_pointer_binding_v1.pressed@ --
+-- which is the press -- carries no position.  Correlating the two is
+-- guesswork at the moment the button goes down.
+--
+-- Everything else about decorations works: they are created, laid out, drawn,
+-- retitled and destroyed.
 handleMouseFocusDrag :: (DecorationStyle ds a) => ds a -> DecorationState -> Event -> X ()
-handleMouseFocusDrag ds (DS dwrs _) ButtonEvent { ev_window     = ew
-                                                , ev_event_type = et
-                                                , ev_x_root     = ex
-                                                , ev_y_root     = ey }
-    | et == buttonPress
-    , Just ((mainw,r), (_, decoRectM)) <- lookFor ew dwrs = do
-        let Rectangle dx _ dwh _ = fromJust decoRectM
-            distFromLeft = ex - fi dx
-            distFromRight = fi dwh - (ex - fi dx)
-        dealtWith <- decorationCatchClicksHook ds mainw (fi distFromLeft) (fi distFromRight)
-        unless dealtWith $
-            mouseDrag (\x y -> focus mainw >> decorationWhileDraggingHook ds ex ey (mainw, r) x y)
-                        (decorationAfterDraggingHook ds (mainw, r) ew)
-handleMouseFocusDrag _ _ _ = return ()
+handleMouseFocusDrag _ _ _ =
+    warnUnimplemented "Decoration.handleMouseFocusDrag"
+      -- Concatenated rather than written as a string gap: this module is
+      -- compiled with CPP, which treats a trailing backslash as a line
+      -- continuation and splices the lines before GHC sees them.
+      (  "Clicking a decoration does nothing: river reports button presses "
+      ++ "against windows, and a decoration is a surface the window manager "
+      ++ "draws rather than a window river knows about.")
 
 handleDraggingInProgress :: CInt -> CInt -> (Window, Rectangle) -> Position -> Position -> X ()
 handleDraggingInProgress ex ey (_, r) x y = do
@@ -377,12 +404,19 @@ createDecos t ds sc s wrs ((w,r):xs) = do
 createDecos _ _ _ _ _ [] = return []
 
 createDecoWindow :: Theme -> Rectangle -> X Window
-createDecoWindow t r = do
-  let mask = Just (exposureMask .|. buttonPressMask)
-  w <- createNewWindow r mask (inactiveColor t) True
-  d <- asks display
-  io $ setClassHint d w (ClassHint "xmonad-decoration" "xmonad")
-  pure w
+createDecoWindow t r =
+  -- No event mask and no class hint, and neither is a loss.
+  --
+  -- The mask asked the X server to deliver Expose and ButtonPress on this
+  -- window.  Wayland delivers neither: a surface is never asked to repaint
+  -- (see 'handleEvent'), and a click on a surface the window manager drew is
+  -- not reported to it at all (see 'handleMouseFocusDrag').
+  --
+  -- The class hint set WM_CLASS to @xmonad-decoration@, so that a pager or a
+  -- rule could tell a decoration apart from a real window.  A decoration is
+  -- not a window here -- river never learns it exists -- so there is nobody to
+  -- tell apart from what.
+  createNewWindow r Nothing (inactiveColor t) True
 
 showDecos :: [DecoWin] -> X ()
 showDecos = showWindows . mapMaybe fst . filter (isJust . snd)

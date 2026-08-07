@@ -30,23 +30,8 @@ module XMonad.Hooks.UrgencyHook (
                                  -- ** Useful keybinding
                                  -- $keybinding
 
-                                 -- * Troubleshooting
-                                 -- $troubleshooting
-
-                                 -- * Example: Setting up irssi + rxvt-unicode
-                                 -- $example
-
-                                 -- ** Configuring irssi
-                                 -- $irssi
-
-                                 -- ** Configuring screen
-                                 -- $screen
-
-                                 -- ** Configuring rxvt-unicode
-                                 -- $urxvt
-
-                                 -- ** Configuring xmonad
-                                 -- $xmonad
+                                 -- * Differences under river
+                                 -- $river
 
                                  -- * Stuff for your config file:
                                  withUrgencyHook, withUrgencyHookC,
@@ -71,20 +56,19 @@ module XMonad.Hooks.UrgencyHook (
                                  ) where
 
 import XMonad
-import XMonad.Prelude (fi, delete, fromMaybe, listToMaybe, maybeToList, when, (\\))
+import XMonad.Prelude (delete, listToMaybe, maybeToList, (\\))
 import qualified XMonad.StackSet as W
 
 import XMonad.Hooks.ManageHelpers (windowTag)
 import XMonad.Util.Dzen (dzenWithArgs, seconds)
+import qualified XMonad.Util.ExtensibleConf as XC
 import qualified XMonad.Util.ExtensibleState as XS
 import XMonad.Util.NamedWindows (getName)
 import XMonad.Util.Timer (TimerId, startTimer, handleTimer)
-import XMonad.Util.WindowProperties (getProp32)
+import XMonad.River (parseColorMaybe)
 
-import Data.Bits (testBit)
 import qualified Data.Set as S
 import System.IO (hPutStrLn, stderr)
-import Foreign.C.Types (CLong)
 
 -- $usage
 --
@@ -127,70 +111,38 @@ import Foreign.C.Types (CLong)
 -- You can set up a keybinding to jump to the window that was recently marked
 -- urgent. See an example at 'focusUrgent'.
 
--- $troubleshooting
+-- $river
 --
--- There are three steps to get right:
+-- Under river, __a window cannot mark itself urgent.__  Only the config can,
+-- by calling 'askUrgent' or using 'doAskUrgent' in a manage hook.
 --
--- 1. The X client must set the UrgencyHint flag. How to configure this
---    depends on the application. If you're using a terminal app, this is in
---    two parts:
+-- Everything else in this module is unchanged and works exactly as it always
+-- did: the list of urgent windows, 'SuppressWhen', 'RemindWhen' and its
+-- timers, every 'UrgencyHook' instance, 'focusUrgent', 'clearUrgents', and
+-- 'readUrgents' -- which is all that "XMonad.Layout.Decoration" and
+-- "XMonad.Hooks.StatusBar.PP" ever wanted from here.  The list also survives a
+-- restart now, since it is a 'PersistentExtension' and river has a state file
+-- again.
 --
---      * The console app must send a ^G (bell). In bash, a helpful trick is
---        @sleep 1; echo -e \'\\a\'@.
+-- What is missing is the /input/, and it is missing at the compositor rather
+-- than here.  X11 gave a client two ways to raise its hand:
 --
---      * The terminal must convert the bell into UrgencyHint.
+-- * the urgency flag in @WM_HINTS@, which xmonad saw as a @PropertyNotify@, and
+-- * a @_NET_WM_STATE_DEMANDS_ATTENTION@ client message.
 --
--- 2. XMonad must be configured to notice UrgencyHints. If you've added
---    withUrgencyHook, you may need to hit mod-shift-space to reset the layout.
+-- Wayland's equivalent is @xdg-activation-v1@, and river implements it -- but
+-- when the surface being activated is a window, river's @handleRequestActivate@
+-- does nothing at all, with the comment @TODO support xdg-activation with a rwm
+-- extension protocol@.  So the request reaches the compositor and stops there;
+-- there is no event for a window manager to receive.  Nothing in this module
+-- can fix that, and when river grows the extension, the fix here is one event
+-- handler calling 'markUrgent'.
 --
--- 3. The dzen must run when told. Run @dzen2 -help@ and make sure that it
---    supports all of the arguments you told DzenUrgencyHook to pass it. Also,
---    set up a keybinding to the 'dzen' action in "XMonad.Util.Dzen" to test
---    if that works.
---
--- As best you can, try to isolate which one(s) of those is failing.
-
--- $example
---
--- This is a commonly asked example. By default, the window doesn't get flagged
--- urgent when somebody messages you in irssi. You will have to configure some
--- things. If you're using different tools than this, your mileage will almost
--- certainly vary. (For example, in Xchat2, it's just a simple checkbox.)
-
--- $irssi
--- @Irssi@ is not an X11 app, so it can't set the @UrgencyHint@ flag on @XWMHints@.
--- However, on all console applications is bestown the greatest of all notification
--- systems: the bell. That's right, Ctrl+G, ASCII code 7, @echo -e '\a'@, your
--- friend, the bell. To configure @irssi@ to send a bell when you receive a message:
---
--- > /set beep_msg_level MSGS NOTICES INVITES DCC DCCMSGS HILIGHT
---
--- Consult your local @irssi@ documentation for more detail.
-
--- $screen
--- A common way to run @irssi@ is within the lovable giant, @screen@. Some distros
--- (e.g. Ubuntu) like to configure @screen@ to trample on your poor console
--- applications -- in particular, to turn bell characters into evil, smelly
--- \"visual bells.\" To turn this off, add:
---
--- > vbell off # or remove the existing 'vbell on' line
---
--- to your .screenrc, or hit @C-a C-g@ within a running @screen@ session for an
--- immediate but temporary fix.
-
--- $urxvt
--- Rubber, meet road. Urxvt is the gateway between console apps and X11. To tell
--- urxvt to set an @UrgencyHint@ when it receives a bell character, first, have
--- an urxvt version 8.3 or newer, and second, set the following in your
--- @.Xdefaults@:
---
--- > urxvt.urgentOnBell: true
---
--- Depending on your setup, you may need to @xrdb@ that.
-
--- $xmonad
--- Hopefully you already read the section on how to configure xmonad. If not,
--- hopefully you know where to find it.
+-- The practical consequence is narrow: the bell-in-a-terminal workflow the
+-- sections upstream documents here no longer reaches xmonad. Anything the config
+-- decides for itself -- a manage hook marking new windows from a particular
+-- application, a keybinding, a script calling into the config -- works as
+-- before.
 
 -- | This is the method to enable an urgency hook. It uses the default
 -- 'urgencyConfig' to control behavior. To change this, use 'withUrgencyHookC'
@@ -206,11 +158,29 @@ withUrgencyHook hook = withUrgencyHookC hook def
 -- (Don't type the @...@, you dolt.) See 'UrgencyConfig' for details on configuration.
 withUrgencyHookC :: (LayoutClass l Window, UrgencyHook h) =>
                     h -> UrgencyConfig -> XConfig l -> XConfig l
-withUrgencyHookC hook urgConf conf = conf {
-        handleEventHook = \e -> handleEvent (WithUrgencyHook hook urgConf) e >> handleEventHook conf e,
+withUrgencyHookC hook urgConf conf = XC.once id (MarkUrgent (markUrgent wuh)) conf {
+        handleEventHook = \e -> handleEvent wuh e >> handleEventHook conf e,
         logHook = cleanupUrgents (suppressWhen urgConf) >> logHook conf,
         startupHook = cleanupStaleUrgents >> startupHook conf
     }
+  where wuh = WithUrgencyHook hook urgConf
+
+-- | How 'askUrgent' reaches the configured hook.
+--
+-- Under X11 'askUrgent' sent itself a @_NET_WM_STATE@ client message and let
+-- 'handleEvent' pick it up, so that the configured 'SuppressWhen' was
+-- respected.  There is no such round trip here -- river delivers no client
+-- messages -- so the marker is stashed in the config and invoked directly.
+-- That is what upstream's comment on 'askUrgent' says it would do given
+-- "XMonad.Util.ExtensibleConf", which now exists.
+--
+-- 'XC.once' means several 'withUrgencyHook' applications leave the first one's
+-- marker in place, matching the old behaviour: the outermost 'handleEvent' saw
+-- the message first and marked the window before any other could.
+newtype MarkUrgent = MarkUrgent (Window -> X ())
+
+instance Semigroup MarkUrgent where
+    a <> _ = a
 
 newtype Urgents = Urgents { fromUrgents :: [Window] } deriving (Read,Show)
 
@@ -320,29 +290,6 @@ adjustReminders = XS.modify
 data WithUrgencyHook h = WithUrgencyHook h UrgencyConfig
     deriving (Read, Show)
 
--- | Change the _NET_WM_STATE property by applying a function to the list of atoms.
-changeNetWMState :: Display -> Window -> ([CLong] -> [CLong]) -> X ()
-changeNetWMState dpy w f = do
-   wmstate <- getAtom "_NET_WM_STATE"
-   wstate  <- fromMaybe [] <$> getProp32 wmstate w
-   io $ changeProperty32 dpy w wmstate aTOM propModeReplace (f wstate)
-   return ()
-
--- | Add an atom to the _NET_WM_STATE property.
-addNetWMState :: Display -> Window -> Atom -> X ()
-addNetWMState dpy w atom = changeNetWMState dpy w (fromIntegral atom :)
-
--- | Remove an atom from the _NET_WM_STATE property.
-removeNetWMState :: Display -> Window -> Atom -> X ()
-removeNetWMState dpy w atom = changeNetWMState dpy w $ delete (fromIntegral atom)
-
--- | Get the _NET_WM_STATE propertly as a [CLong]
-getNetWMState :: Window -> X [CLong]
-getNetWMState w = do
-    a_wmstate <- getAtom "_NET_WM_STATE"
-    fromMaybe [] <$> getProp32 a_wmstate w
-
-
 -- The Non-ICCCM Manifesto:
 -- Note: Some non-standard choices have been made in this implementation to
 -- account for the fact that things are different in a tiling window manager:
@@ -355,43 +302,35 @@ getNetWMState w = do
 -- ourselves, allowing us to clear urgency when a window is visible, and not to
 -- set urgency if a window is visible. If you have a better idea, please, let us
 -- know!
+--
+-- Tracking the list ourselves is also what lets this module work at all under
+-- river; see $river.
 handleEvent :: UrgencyHook h => WithUrgencyHook h -> Event -> X ()
 handleEvent wuh event =
     case event of
-     -- WM_HINTS urgency flag
-      PropertyEvent { ev_event_type = t, ev_atom = a, ev_window = w } ->
-          when (t == propertyNotify && a == wM_HINTS) $ withDisplay $ \dpy -> do
-              WMHints { wmh_flags = flags } <- io $ getWMHints dpy w
-              if testBit flags urgencyHintBit then markUrgent w else markNotUrgent w
-      -- Window destroyed
+      -- Window destroyed.  An urgent window that has gone away must not stay
+      -- in the list: river recycles object ids, so a stale entry would come
+      -- back attached to some unrelated window.
       DestroyWindowEvent {ev_window = w} ->
           markNotUrgent w
-      -- _NET_WM_STATE_DEMANDS_ATTENTION requested by client
-      ClientMessageEvent {ev_event_display = dpy, ev_window = w, ev_message_type = t, ev_data = action:atoms} -> do
-          a_wmstate <- getAtom "_NET_WM_STATE"
-          a_da      <- getAtom "_NET_WM_STATE_DEMANDS_ATTENTION"
-          wstate    <- getNetWMState w
-          let demandsAttention = fromIntegral a_da `elem` wstate
-              remove = 0
-              add    = 1
-              toggle = 2
-          when (t == a_wmstate && fromIntegral a_da `elem` atoms) $ do
-            when (action == add || (action == toggle && not demandsAttention)) $ do
-              markUrgent w
-              addNetWMState dpy w a_da
-            when (action == remove || (action == toggle && demandsAttention)) $ do
-              markNotUrgent w
-              removeNetWMState dpy w a_da
       _ ->
           mapM_ handleReminder =<< readReminders
       where handleReminder reminder = handleTimer (timer reminder) event $ reminderHook wuh reminder
-            markUrgent w = do
-                adjustUrgents (\ws -> if w `elem` ws then ws else w : ws)
-                callUrgencyHook wuh w
-                userCodeDef () =<< asks (logHook . config)
-            markNotUrgent w = do
+            markNotUrgent w =
                 adjustUrgents (delete w) >> adjustReminders (filter $ (w /=) . window)
-                userCodeDef () =<< asks (logHook . config)
+                  >> (userCodeDef () =<< asks (logHook . config))
+
+-- | Add a window to the urgent list and run the hook for it.
+--
+-- Under X11 this was local to 'handleEvent', reached only by an incoming
+-- @WM_HINTS@ change or @_NET_WM_STATE@ message.  Neither exists here, so it is
+-- named and reachable from 'askUrgent' instead -- which is the only way a
+-- window becomes urgent under river.  See $river.
+markUrgent :: UrgencyHook h => WithUrgencyHook h -> Window -> X ()
+markUrgent wuh w = do
+    adjustUrgents (\ws -> if w `elem` ws then ws else w : ws)
+    callUrgencyHook wuh w
+    userCodeDef () =<< asks (logHook . config)
 
 callUrgencyHook :: UrgencyHook h => WithUrgencyHook h -> Window -> X ()
 callUrgencyHook (WithUrgencyHook hook UrgencyConfig { suppressWhen = sw, remindWhen = rw }) w =
@@ -426,11 +365,13 @@ cleanupUrgents :: SuppressWhen -> X ()
 cleanupUrgents sw = clearUrgents' =<< suppressibleWindows sw
 
 -- | Clear urgency status of selected windows.
+--
+-- X11 also cleared @_NET_WM_STATE_DEMANDS_ATTENTION@ on each window, so that a
+-- pager reading the property agreed with xmonad about what was urgent.  There
+-- is no such property here and no pager reading one: the list this keeps is
+-- the only record, which makes it the authority rather than a cache.
 clearUrgents' :: [Window] -> X ()
-clearUrgents' ws = do
-    a_da <- getAtom "_NET_WM_STATE_DEMANDS_ATTENTION"
-    dpy <- withDisplay return
-    mapM_ (\w -> removeNetWMState dpy w a_da) ws
+clearUrgents' ws =
     adjustUrgents (\\ ws) >> adjustReminders (filter ((`notElem` ws) . window))
 
 suppressibleWindows :: SuppressWhen -> X [Window]
@@ -502,14 +443,27 @@ newtype BorderUrgencyHook = BorderUrgencyHook { urgencyBorderColor :: String }
 
 instance UrgencyHook BorderUrgencyHook where
   urgencyHook BorderUrgencyHook { urgencyBorderColor = cs } w =
-    withDisplay $ \dpy -> do
-      c' <- io (initColor dpy cs)
-      case c' of
-        Just c -> setWindowBorderWithFallback dpy w cs c
-        _      -> io $ hPutStrLn stderr $ concat ["Warning: bad urgentBorderColor "
-                                                 ,show cs
-                                                 ," in BorderUrgencyHook"
-                                                 ]
+    withDisplay $ \dpy ->
+      case parseColorMaybe cs of
+        Just c  -> setWindowBorderWithFallback dpy w cs c
+        Nothing -> io $ hPutStrLn stderr $ concat ["Warning: bad urgentBorderColor "
+                                                  ,show cs
+                                                  ," in BorderUrgencyHook"
+                                                  ]
+
+-- The X11 version resolved the colour with initColor, which asked the server
+-- to allocate it, and passed the result as the fallback to
+-- setWindowBorderWithFallback -- so the fallback was the same colour, and the
+-- whole dance existed to detect a bad colour name.  parseColorMaybe answers
+-- that question directly.
+--
+-- The border set here stays until something else sets it.  Under X11 the next
+-- 'windows' call reset every visible window's border, so this reverted on the
+-- next focus or layout change; river reapplies borders from a stored override
+-- instead, and an override that any render sequence could clear would not
+-- survive long enough to be seen.  'clearUrgents' does not reset it either --
+-- it did not under X11 -- so a config that wants the colour back should say
+-- so.
 
 -- | Flashes when a window requests your attention and you can't see it.
 -- Defaults to a duration of five seconds, and no extra args to dzen.
@@ -555,21 +509,16 @@ filterUrgencyHook' q w = whenX (runQuery q w) (clearUrgents' [w])
 
 -- | Mark the given window urgent.
 --
--- (The implementation is a bit hacky: send a _NET_WM_STATE ClientMessage to
--- ourselves. This is so that we respect the 'SuppressWhen' of the configured
--- urgency hooks. If this module if ever migrated to the ExtensibleConf
--- infrastrcture, we'll then invoke markUrgent directly.)
+-- __Under river this is the only way a window becomes urgent.__  X11 had two
+-- others and neither has a counterpart here: a client set the urgency flag in
+-- @WM_HINTS@ and xmonad noticed the property change, or it sent a
+-- @_NET_WM_STATE_DEMANDS_ATTENTION@ client message.  See $river.
+--
+-- The window still goes through the configured 'SuppressWhen' and
+-- 'RemindWhen', so a config that asks for a window it can already see to be
+-- left alone still gets that.
 askUrgent :: Window -> X ()
-askUrgent w = withDisplay $ \dpy -> do
-    rw <- asks theRoot
-    a_wmstate <- getAtom "_NET_WM_STATE"
-    a_da      <- getAtom "_NET_WM_STATE_DEMANDS_ATTENTION"
-    let state_add = 1
-    let source_pager = 2
-    io $ allocaXEvent $ \e -> do
-        setEventType e clientMessage
-        setClientMessageEvent' e w a_wmstate 32 [state_add, fi a_da, 0, source_pager]
-        sendEvent dpy rw False (substructureRedirectMask .|. substructureNotifyMask) e
+askUrgent w = XC.with $ \(MarkUrgent mark) -> mark w
 
 -- | Helper for 'ManageHook' that marks the window as urgent (unless
 -- suppressed, see 'SuppressWhen'). Useful in
