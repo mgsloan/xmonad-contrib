@@ -76,6 +76,7 @@ module XMonad.Util.River.Compat
     , drawRectangle
     , copyArea
     , drawOn
+    , renderDrawableInto
     ) where
 
 import Control.Monad (forM_, when)
@@ -85,6 +86,8 @@ import Data.Word (Word32, Word64)
 import Graphics.Rendering.Cairo (Render)
 import System.IO.Unsafe (unsafePerformIO)
 import qualified Data.Map.Strict as M
+import Foreign.Ptr (castPtr)
+import Graphics.Rendering.Cairo (withImageSurfaceForData)
 import qualified Graphics.Rendering.Cairo as C
 
 import XMonad.River.Connection (Connection)
@@ -92,7 +95,8 @@ import XMonad.River.Types (Dimension, Position, Rectangle (..), Window)
 import XMonad.River.Wire (ObjectId (..))
 import qualified XMonad.River.Surface as R
 
-import XMonad.Util.River.Draw (Canvas, Colour, withCanvas)
+import XMonad.River.Buffer (Buffer (..))
+import XMonad.Util.River.Draw (Canvas (..), Colour, withCanvas)
 
 -- | An event mask.
 --
@@ -247,8 +251,12 @@ withDrawable d k = lookupDrawable d >>= mapM_ k
 -- This is the deferral the module header describes: nothing is rasterised
 -- here, which is what lets a caller paint a window in one function and write
 -- text into it in another.
+-- Atomic because two threads reach it: a prompt builds its frame on its own
+-- thread while the client thread drains the queue to present it.  Nothing else
+-- in this module is concurrent, but this one operation is.
 drawOn :: Drawable -> (Canvas -> Render ()) -> IO ()
-drawOn d op = withDrawable d $ \st -> modifyIORef' (dsOps st) (op :)
+drawOn d op = withDrawable d $ \st ->
+  atomicModifyIORef' (dsOps st) $ \ops -> (op : ops, ())
 
 -- | Replay everything queued and present the result.
 --
@@ -283,6 +291,22 @@ copyArea src dst dx dy =
               op canvas
               C.restore
     modifyIORef' (dsOps t) (reverse (map shifted ops) ++)
+
+-- | Replay a drawable's queued operations into a buffer of a client's own.
+--
+-- The bridge between the two ways a window manager can put something on the
+-- screen.  Decorations use surfaces the window manager owns and commits
+-- itself; a prompt is an ordinary Wayland client on its own connection,
+-- because that is the only way to get real keyboard input, and it presents its
+-- own buffers.  Both want the same drawing code, so a prompt builds its frame
+-- in an offscreen drawable exactly as a decoration would and hands it here.
+renderDrawableInto :: Drawable -> Buffer -> IO ()
+renderDrawableInto d buf = withDrawable d $ \st -> do
+  ops <- atomicModifyIORef' (dsOps st) $ \os -> ([], reverse os)
+  withImageSurfaceForData (castPtr (bufPixels buf)) C.FormatARGB32
+      (bufWidth buf) (bufHeight buf) (bufStride buf) $ \img ->
+    C.renderWith img $
+      forM_ ops ($ Canvas (bufWidth buf) (bufHeight buf))
 
 --------------------------------------------------------------------------------
 -- Graphics contexts

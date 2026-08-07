@@ -38,7 +38,6 @@ module XMonad.Prompt
     ( -- * Usage
       -- $usage
       mkXPrompt
-    , mkXPromptWithReturn
     , mkXPromptWithModes
     , def
     , amberXPConfig
@@ -71,7 +70,6 @@ module XMonad.Prompt
     , ComplCaseSensitivity(..)
     -- * X Utilities
     -- $xutils
-    , mkUnmanagedWindow
     , fillDrawable
     -- * Other Utilities
     -- $utils
@@ -105,6 +103,14 @@ import qualified XMonad.StackSet              as W
 import           XMonad.Util.Font
 import           XMonad.Util.Types
 import           XMonad.Util.XSelection       (getSelection)
+import           XMonad.River                 (postAction)
+import           XMonad.River.Client          (Anchor (..), ClientHandle (..),
+                                               ClientSpec (..), startClient)
+import           XMonad.River.Wire            (nullObject)
+import           XMonad.Util.River.Compat     (Drawable, GC, Pixel, copyArea,
+                                               createGC, createPixmap, freeGC,
+                                               freePixmap, fillRectangle,
+                                               renderDrawableInto, setForeground)
 
 import           Codec.Binary.UTF8.String     (decodeString,isUTF8Encoded)
 import           Control.Arrow                (first, (&&&), (***))
@@ -113,7 +119,10 @@ import           Control.Exception            as E hiding (handle)
 import           Control.Monad.State
 import           Data.Bifunctor               (bimap)
 import           Data.Bits
+import           Control.Concurrent           (Chan, forkIO, newChan,
+                                               readChan, writeChan)
 import           Data.IORef
+import           System.IO.Unsafe             (unsafePerformIO)
 import qualified Data.List.NonEmpty           as NE
 import qualified Data.Map                     as M
 import           Data.Set                     (fromList, toList)
@@ -161,6 +170,14 @@ data XPState =
         , eventBuffer           :: [(KeySym, String, Event)]
         , inputBuffer           :: String
         , currentCompletions    :: Maybe [String]
+        , keyChan               :: Chan (KeySym, String)
+          -- ^ Keystrokes, from the prompt's own Wayland connection.
+          --
+          -- Upstream reads them from an X event queue with @maskEvent@.  This
+          -- is the same blocking read against a different source: the client
+          -- thread pushes, the prompt's logic thread pops.  Nothing about the
+          -- loops above had to change, which is why they did not.
+        , clientH               :: ClientHandle
         }
 
 data XPConfig =
@@ -508,12 +525,21 @@ getCurrentCompletions = gets currentCompletions
 --   is yielded if the user cancels the prompt (by e.g. hitting Esc or
 --   Ctrl-G).  For an example of use, see the 'XMonad.Prompt.Input'
 --   module.
-mkXPromptWithReturn :: XPrompt p => p -> XPConfig -> ComplFunction -> (String -> X a)  -> X (Maybe a)
-mkXPromptWithReturn t conf compl action = do
-  st' <- mkXPromptImplementation (showXPrompt t) conf (XPSingleMode compl (XPT t))
-  if successful st'
-    then Just <$> action (selectedCompletion st')
-    else return Nothing
+-- Note [No mkXPromptWithReturn]
+--
+-- Upstream also exports
+--
+-- > mkXPromptWithReturn :: ... -> (String -> X a) -> X (Maybe a)
+--
+-- whose type promises the answer is in hand when it returns.  It cannot be.
+-- The prompt runs on its own thread -- see 'mkXPromptImplementation' -- and the
+-- only way to hand a result back to this one would be to block it, which is
+-- the window manager's event loop and the thing that would have to deliver the
+-- keystrokes.  Waiting for them on it deadlocks.
+--
+-- Everything else survives, including 'promptSubmap' and 'promptBuffer', which
+-- have the same shape and which an inverted event loop would also have cost.
+-- That is why the prompt got a thread rather than a continuation.
 
 -- | Creates a prompt given:
 --
@@ -525,8 +551,11 @@ mkXPromptWithReturn t conf compl action = do
 -- create a completions function given a list of possible completions)
 --
 -- * an action to be run: the action must take a string and return 'XMonad.X' ()
+--
+-- Returns once the prompt is on screen; the action runs when the user is done.
 mkXPrompt :: XPrompt p => p -> XPConfig -> ComplFunction -> (String -> X ()) -> X ()
-mkXPrompt t conf compl action = void $ mkXPromptWithReturn t conf compl action
+mkXPrompt t conf compl =
+  mkXPromptImplementation (showXPrompt t) conf (XPSingleMode compl (XPT t))
 
 -- | Creates a prompt with multiple modes given:
 --
@@ -546,59 +575,106 @@ mkXPromptWithModes (defaultMode : modes) conf = do
                           , W.down = modes -- Other modes
                           }
       om = XPMultipleModes modeStack
-  st' <- mkXPromptImplementation (showXPrompt defaultMode) conf { alwaysHighlight = True } om
-  when (successful st') $
-    case operationMode st' of
-      XPMultipleModes ms -> let
-        action = modeAction $ W.focus ms
-        in action (command st') $ fromMaybe "" (highlightedCompl st')
-      _ -> error "The impossible occurred: This prompt runs with multiple modes but they could not be found." --we are creating a prompt with multiple modes, so its operationMode should have been constructed with XPMultipleMode
+  -- Which mode is current, and so which action runs, is only known when the
+  -- user is done, so the continuation reads it back off the final state rather
+  -- than being chosen now.
+  mkXPromptImplementationWith
+    (showXPrompt defaultMode) conf { alwaysHighlight = True } om $ \st' ->
+      case operationMode st' of
+        XPMultipleModes ms ->
+          modeAction (W.focus ms) (command st') (fromMaybe "" (highlightedCompl st'))
+        _ -> pure ()
 
--- Internal function used to implement 'mkXPromptWithReturn' and
--- 'mkXPromptWithModes'.
-mkXPromptImplementation :: String -> XPConfig -> XPOperationMode -> X XPState
-mkXPromptImplementation historyKey conf om = do
-  XConf { display = d, theRoot = rw } <- ask
+-- Internal function used to implement 'mkXPrompt' and 'mkXPromptWithModes'.
+mkXPromptImplementation
+  :: String -> XPConfig -> XPOperationMode -> (String -> X ()) -> X ()
+mkXPromptImplementation historyKey conf om action =
+  mkXPromptImplementationWith historyKey conf om $ \st ->
+    action (selectedCompletion st)
+
+-- | As 'mkXPromptImplementation', but the continuation sees the whole final
+-- state rather than just the selected string.
+--
+-- == Why there is a thread here
+--
+-- The prompt's state machine is unchanged from upstream: 'runXP' still runs
+-- 'eventLoop', which still blocks for a keystroke, and 'promptSubmap' and
+-- 'promptBuffer' still nest their own loops inside it.  That only works
+-- because it happens somewhere that is allowed to block.
+--
+-- It cannot be the window manager's event loop, which is the one thread that
+-- may touch the compositor connection and therefore the only thing that could
+-- ever deliver a keystroke; blocking it to wait for one deadlocks.  So the
+-- state machine gets a thread, keystrokes arrive over a 'Chan' from the
+-- prompt's own Wayland connection, and the only thing that goes back to the
+-- window manager is the final action, posted with 'postAction'.
+--
+-- The alternative was to inverse the loop -- register a handler, return, be
+-- driven by callbacks.  That would have cost 'promptSubmap' and 'promptBuffer'
+-- as well as @mkXPromptWithReturn@, because each of them consumes keystrokes
+-- and returns a value.  A thread costs none of them, and @XP@ is @StateT
+-- XPState IO@ rather than anything in @X@, so there is nothing in the state
+-- machine that needs the window manager to be running it.
+mkXPromptImplementationWith
+  :: String -> XPConfig -> XPOperationMode -> (XPState -> X ()) -> X ()
+mkXPromptImplementationWith historyKey conf om finish = do
+  xconf <- ask
+  let d = display xconf
   s <- gets $ screenRect . W.screenDetail . W.current . windowset
-  cleanMask <- cleanKeyMask
   cachedir <- asks (cacheDir . directories)
   hist <- io $ readHistory conf cachedir
   fs <- initXMF (font conf)
+
   let width = getWinWidth s (position conf)
-  st' <- io $
-    bracket
-      (createPromptWin d rw conf s width)
-      (destroyWindow d)
-      (\w ->
-        bracket
-          (createGC d w)
-          (freeGC d)
-          (\gc -> do
-            selectInput d w $ exposureMask .|. keyPressMask
-            setGraphicsExposures d gc False
-            let hs = fromMaybe [] $ M.lookup historyKey hist
-                st = initState d rw w s om gc fs hs conf cleanMask width
-            runXP st))
-  releaseXMF fs
-  when (successful st') $ do
-    let prune = take (historySize conf)
-    io $ writeHistory conf cachedir $
-      M.insertWith
-      (\xs ys -> prune . historyFilter conf $ xs ++ ys)
-      historyKey
-      -- We need to apply historyFilter before as well, since
-      -- otherwise the filter would not be applied if there is no
-      -- history
-      (prune $ historyFilter conf [selectedCompletion st'])
-      hist
-  return st'
- where
-  -- | Based on the ultimate position of the prompt and the screen
-  -- dimensions, calculate its width.
-  getWinWidth :: Rectangle -> XPPosition -> Dimension
-  getWinWidth scr = \case
-    CenteredAt{ xpWidth } -> floor $ fi (rect_width scr) * xpWidth
-    _                     -> rect_width scr
+      hs = fromMaybe [] $ M.lookup historyKey hist
+
+  chan <- io newChan
+  -- The frame is composed in an offscreen drawable, with exactly the drawing
+  -- code a decoration uses, and replayed into whatever buffer the client
+  -- presents.  Two threads meet at that drawable and nowhere else.
+  frame <- io $ createPixmap width (height conf)
+  gc <- io createGC
+
+  h <- io $ startClient ClientSpec
+    { csWidth  = fi width
+    , csHeight = fi (height conf)
+    , csAnchor = case position conf of
+        Top          -> AnchorTop
+        Bottom       -> AnchorBottom
+        CenteredAt{} -> AnchorCentre
+    , csMargin   = (0, 0, 0, 0)
+    , csKeyboard = True
+    , csDraw    = renderDrawableInto frame
+    , csOnKey   = \sym txt -> writeChan chan (fi sym, txt)
+    , csOnClose = pure ()
+    }
+
+  let st = (initState d nullObject frame s om gc fs hs conf id width)
+             { keyChan = chan, clientH = h }
+
+  io . void . forkIO $ do
+    st' <- runXP st
+    chClose h
+    -- Back on the window manager's thread: history and the action both want
+    -- the X monad, and this thread must not have one.
+    postAction xconf $ do
+      releaseXMF fs
+      when (successful st') $ do
+        let prune = take (historySize conf)
+        io $ writeHistory conf cachedir $
+          M.insertWith
+            (\xs ys -> prune . historyFilter conf $ xs ++ ys)
+            historyKey
+            (prune $ historyFilter conf [selectedCompletion st'])
+            hist
+        finish st'
+
+-- | Based on the ultimate position of the prompt and the screen
+-- dimensions, calculate its width.
+getWinWidth :: Rectangle -> XPPosition -> Dimension
+getWinWidth scr = \case
+  CenteredAt{ xpWidth } -> floor $ fi (rect_width scr) * xpWidth
+  _                     -> rect_width scr
 
 -- | Inverse of 'Codec.Binary.UTF8.String.utf8Encode', that is, a convenience
 -- function that checks to see if the input string is UTF8 encoded before
@@ -608,25 +684,23 @@ utf8Decode str
     | isUTF8Encoded str = decodeString str
     | otherwise         = str
 
+-- | Run the prompt to completion.
+--
+-- No keyboard grab: the prompt's layer surface asks for exclusive keyboard
+-- interactivity when it is created, so the compositor has already routed
+-- everything here.  There is correspondingly nothing to release, and no
+-- @grabSuccess@ to check -- a surface either gets focus or is never mapped.
 runXP :: XPState -> IO XPState
-runXP st = do
-  let d = dpy st
-      w = win st
-  bracket
-    (grabKeyboard d w True grabModeAsync grabModeAsync currentTime)
-    (\_ -> ungrabKeyboard d currentTime)
-    (\status ->
-      execStateT
-        (when (status == grabSuccess) $ do
-          ah <- gets (alwaysHighlight . config)
-          when ah $ do
-            compl <- listToMaybe <$> getCompletions
-            modify' $ \xpst -> xpst{ highlightedCompl = compl }
-          updateWindows
-          eventLoop handleMain evDefaultStop)
-        st
-      `finally` (mapM_ (destroyWindow d) =<< readIORef (complWin st))
-      `finally` sync d False)
+runXP st =
+  execStateT
+    (do ah <- gets (alwaysHighlight . config)
+        when ah $ do
+          compl <- listToMaybe <$> getCompletions
+          modify' $ \xpst -> xpst{ highlightedCompl = compl }
+        updateWindows
+        eventLoop handleMain evDefaultStop)
+    st
+  `finally` (mapM_ freePixmap =<< readIORef (complWin st))
 
 type KeyStroke = (KeySym, String)
 
@@ -642,16 +716,13 @@ eventLoop handle stopAction = do
     b <- gets eventBuffer
     (keysym,keystr,event) <- case b of
         []  -> do
-                d <- gets dpy
-                io $ allocaXEvent $ \e -> do
-                    -- Also capture @buttonPressMask@, see Note [Allow ButtonEvents]
-                    maskEvent d (exposureMask .|. keyPressMask .|. buttonPressMask) e
-                    ev <- getEvent e
-                    if ev_event_type ev == keyPress
-                        then do (_, s) <- lookupString $ asKeyEvent e
-                                ks <- keycodeToKeysym d (ev_keycode ev) 0
-                                return (ks, s, ev)
-                        else return (noSymbol, "", ev)
+                -- The blocking read upstream does against an X event queue,
+                -- against the channel the prompt's own Wayland connection
+                -- feeds.  Blocking here is safe precisely because this is not
+                -- the window manager's thread.
+                ch <- gets keyChan
+                (ks, str) <- io (readChan ch)
+                pure (ks, str, KeyPressed 0 ks)
         (l : ls) -> do
                 modify $ \s -> s { eventBuffer = ls }
                 return l
@@ -663,48 +734,25 @@ evDefaultStop :: XP Bool
 evDefaultStop = gets ((||) . modeDone) <*> gets done
 
 -- | Common patterns shared by all event handlers.
+--
+-- Upstream handles Expose, to repaint after a virtual console switch, and
+-- ButtonPress, to release a pointer grab that would otherwise freeze both
+-- devices.  Neither reaches a prompt here: the compositor owns damage and
+-- repaint, and the window manager makes no pointer grabs -- its pointer
+-- bindings are protocol objects, which cannot freeze anything.
 handleOther :: KeyStroke -> Event -> XP ()
-handleOther _ ExposeEvent{ev_window = w} = do
-    -- Expose events can be triggered by switching virtual consoles.
-    st <- get
-    when (win st == w) updateWindows
-handleOther _ ButtonEvent{ev_event_type = t} = do
-    -- See Note [Allow ButtonEvents]
-    when (t == buttonPress) $ do
-        d <- gets dpy
-        io $ allowEvents d replayPointer currentTime
 handleOther _ _ = return ()
-
-{- Note [Allow ButtonEvents]
-
-Some settings (like @clickJustFocuses = False@) set up the passive
-pointer grabs that xmonad makes to intercept clicks to unfocused windows
-with @pointer_mode = grabModeSync@ and @keyboard_mode = grabModeSync@.
-This means that any click in an unfocused window leads to a
-pointer/keyboard grab that freezes both devices until 'allowEvents' is
-called. But "XMonad.Prompt" has its own X event loop, so 'allowEvents'
-is never called and everything remains frozen indefinitely.
-
-This does not happen when the grabs are made with @grabModeAsync@, as
-pointer events processing is not frozen and the grab only lasts as long
-as the mouse button is pressed.
-
-Hence, in this situation we call 'allowEvents' in the prompts event loop
-whenever a button event is received, releasing the pointer grab. In this
-case, 'replayPointer' takes care of the fact that these events are not
-merely discarded, but passed to the respective application window.
--}
 
 -- | Prompt event handler for the main loop. Dispatches to input, completion
 -- and mode switching handlers.
 handleMain :: KeyStroke -> Event -> XP ()
 handleMain stroke@(keysym, keystr) = \case
-    KeyEvent{ev_event_type = t, ev_state = m} -> do
+    KeyPressed{ev_state = m} -> do
       (prevCompKey, (compKey, modeKey)) <- gets $
           (prevCompletionKey &&& completionKey &&& changeModeKey) . config
       keymask <- gets cleanMask <*> pure m
-      -- haven't subscribed to keyRelease, so just in case
-      when (t == keyPress) $ if
+      -- Only presses reach here; XMonad.River.Client drops releases.
+      if
           | (keymask, keysym) == compKey ->
                getCurrentCompletions >>= handleCompletionMain Next
           | (keymask, keysym) == prevCompKey ->
@@ -839,9 +887,9 @@ handleSubmap :: XP ()
              -> KeyStroke
              -> Event
              -> XP ()
-handleSubmap defaultAction keymap stroke KeyEvent{ev_event_type = t, ev_state = m} = do
+handleSubmap defaultAction keymap stroke KeyPressed{ev_state = m} = do
     keymask <- gets cleanMask <*> pure m
-    when (t == keyPress) $ handleInputSubmap defaultAction keymap keymask stroke
+    handleInputSubmap defaultAction keymap keymask stroke
 handleSubmap _ _ stroke event = handleOther stroke event
 
 handleInputSubmap :: XP ()
@@ -896,9 +944,9 @@ handleBuffer :: (String -> String -> (Bool,Bool))
              -> KeyStroke
              -> Event
              -> XP ()
-handleBuffer f stroke event@KeyEvent{ev_event_type = t, ev_state = m} = do
+handleBuffer f stroke event@KeyPressed{ev_state = m} = do
     keymask <- gets cleanMask <*> pure m
-    when (t == keyPress) $ handleInputBuffer f keymask stroke event
+    handleInputBuffer f keymask stroke event
 handleBuffer _ stroke event = handleOther stroke event
 
 handleInputBuffer :: (String -> String -> (Bool,Bool))
@@ -1438,22 +1486,6 @@ data ComplWindowDim = ComplWindowDim
   deriving (Eq)
 
 -- | Create the prompt window.
-createPromptWin :: Display -> Window -> XPConfig -> Rectangle -> Dimension -> IO Window
-createPromptWin dpy rootw XPC{ position, height } scn width = do
-  w <- mkUnmanagedWindow dpy (defaultScreenOfDisplay dpy) rootw
-                      (rect_x scn + x) (rect_y scn + y) width height
-  setClassHint dpy w (ClassHint "xmonad-prompt" "xmonad")
-  mapWindow dpy w
-  return w
- where
-  (x, y) :: (Position, Position) = fi <$> case position of
-    Top             -> (0, 0)
-    Bottom          -> (0, rect_height scn - height)
-    CenteredAt py w ->
-      ( floor $ fi (rect_width scn) * ((1 - w) / 2)
-      , floor $ py * fi (rect_height scn) - (fi height / 2)
-      )
-
 -- | Update the state of the completion window.
 updateComplWin :: Maybe Window -> Maybe ComplWindowDim -> XP ()
 updateComplWin win winDim = do
@@ -1475,22 +1507,32 @@ redrawWindows emptyAction compls = do
   d <- gets dpy
   drawWin
   maybe emptyAction redrawComplWin (nonEmpty compls)
-  io $ sync d False
  where
   -- | Draw the main prompt window.
   drawWin :: XP () = do
     XPS{ color, dpy, win, gcon, winWidth } <- get
     XPC{ height, promptBorderWidth } <- gets config
-    let scr = defaultScreenOfDisplay dpy
-        ht  = height            -- height of a single row
-        bw  = promptBorderWidth
-    Just bgcolor <- io $ initColor dpy (bgNormal color)
-    Just borderC <- io $ initColor dpy (border color)
-    pm <- io $ createPixmap dpy win winWidth ht (defaultDepthOfScreen scr)
+    let ht = height            -- height of a single row
+        bw = promptBorderWidth
+    bgcolor <- stringToPixel dpy (bgNormal color)
+    borderC <- stringToPixel dpy (border color)
+    pm <- io $ createPixmap winWidth ht
     io $ fillDrawable dpy pm gcon borderC bgcolor (fi bw) winWidth ht
     printPrompt pm
-    io $ copyArea dpy pm win gcon 0 0 winWidth ht 0 0
-    io $ freePixmap dpy pm
+    io $ copyArea pm win 0 0
+    io $ freePixmap pm
+    -- Presenting is a commit rather than a copy to a server-side window.
+    io . chRedraw =<< gets clientH
+
+-- | The surfaces presenting completion lists, by their drawable.
+--
+-- Upstream needs no such table: destroying an X window is one call on an id.
+-- A surface here is a thread and a connection as well as a drawable, so the
+-- handle that can shut them down has to be findable from the drawable the rest
+-- of the code passes around.
+{-# NOINLINE complClients #-}
+complClients :: IORef [(Drawable, ClientHandle)]
+complClients = unsafePerformIO (newIORef [])
 
 -- | Redraw the completion window, if necessary.
 redrawComplWin ::  NonEmpty String -> XP ()
@@ -1511,11 +1553,30 @@ redrawComplWin compl = do
      else destroyComplWin
  where
   createComplWin :: ComplWindowDim -> XP Window
-  createComplWin wi@ComplWindowDim{ cwX, cwY, cwWidth, cwRowHeight } = do
-    XPS{ dpy, rootw } <- get
-    let scr = defaultScreenOfDisplay dpy
-    w <- io $ mkUnmanagedWindow dpy scr rootw cwX cwY cwWidth cwRowHeight
-    io $ mapWindow dpy w
+  createComplWin wi@ComplWindowDim{ cwY, cwWidth, cwRowHeight } = do
+    XPS{ config = cfg } <- get
+    -- A drawable to compose into, and a surface of its own to present it.
+    -- Separate from the prompt's, as upstream has it, but without the
+    -- keyboard: two surfaces asking for exclusive interactivity would fight
+    -- over focus, and this one is shown rather than typed into.
+    w <- io $ createPixmap cwWidth cwRowHeight
+    h <- io $ startClient ClientSpec
+      { csWidth  = fi cwWidth
+      , csHeight = fi cwRowHeight
+      , csAnchor = case position cfg of
+          Bottom -> AnchorBottom
+          _      -> AnchorTop
+      -- A layer surface has no coordinates, only a distance from its anchor,
+      -- so the absolute cwY upstream computes becomes a margin.
+      , csMargin = case position cfg of
+          Bottom -> (0, 0, fi (height cfg), 0)
+          _      -> (fi cwY, 0, 0, 0)
+      , csKeyboard = False
+      , csDraw    = renderDrawableInto w
+      , csOnKey   = \_ _ -> pure ()
+      , csOnClose = pure ()
+      }
+    io $ modifyIORef' complClients ((w, h) :)
     updateComplWin (Just w) (Just wi)
     return w
 
@@ -1568,7 +1629,11 @@ destroyComplWin :: XP ()
 destroyComplWin = do
   XPS{ dpy, complWin } <- get
   io (readIORef complWin) >>= \case
-    Just w -> do io $ destroyWindow dpy w
+    Just w -> do io $ do
+                   cs <- readIORef complClients
+                   mapM_ (chClose . snd) (filter ((== w) . fst) cs)
+                   writeIORef complClients (filter ((/= w) . fst) cs)
+                   freePixmap w
                  updateComplWin Nothing Nothing
     Nothing -> return ()
 
@@ -1628,18 +1693,20 @@ getComplWinDim compl = do
 drawComplWin :: Window -> NonEmpty String -> XP ()
 drawComplWin w entries = do
   XPS{ config, color, dpy, gcon } <- get
-  let scr = defaultScreenOfDisplay dpy
-      bw  = promptBorderWidth config
-  Just bgcolor <- io $ initColor dpy (bgNormal color)
-  Just borderC <- io $ initColor dpy (border color)
+  let bw = promptBorderWidth config
+  bgcolor <- stringToPixel dpy (bgNormal color)
+  borderC <- stringToPixel dpy (border color)
   cwd@ComplWindowDim{ cwWidth, cwRowHeight } <- getComplWinDim entries
 
-  p <- io $ createPixmap dpy w cwWidth cwRowHeight (defaultDepthOfScreen scr)
+  p <- io $ createPixmap cwWidth cwRowHeight
   io $ fillDrawable dpy p gcon borderC bgcolor (fi bw) cwWidth cwRowHeight
   printComplEntries dpy p gcon (fgNormal color) (bgNormal color) entries cwd
-  --lift $ spawn $ "xmessage " ++ " ac: " ++ show ac  ++ " xx: " ++ show xx ++ " length xx: " ++ show (length xx) ++ " yy: " ++ show (length yy)
-  io $ copyArea dpy p w gcon 0 0 cwWidth cwRowHeight 0 0
-  io $ freePixmap dpy p
+  io $ copyArea p w 0 0
+  io $ freePixmap p
+  -- Present it: this surface has its own client, found by its drawable.
+  io $ do
+    cs <- readIORef complClients
+    mapM_ (chRedraw . snd) (filter ((== w) . fst) cs)
 
 -- | Print all of the completion entries.
 printComplEntries
@@ -1716,26 +1783,11 @@ fillDrawable :: Display -> Drawable -> GC -> Pixel -> Pixel
              -> Dimension -> Dimension -> Dimension -> IO ()
 fillDrawable d drw gc borderC bgcolor bw wh ht = do
   -- we start with the border
-  setForeground d gc borderC
-  fillRectangle d drw gc 0 0 wh ht
+  setForeground gc borderC
+  fillRectangle drw gc 0 0 wh ht
   -- here foreground means the background of the text
-  setForeground d gc bgcolor
-  fillRectangle d drw gc (fi bw) (fi bw) (wh - (bw * 2)) (ht - (bw * 2))
-
--- | Creates a window with the attribute override_redirect set to True.
--- Windows Managers should not touch this kind of windows.
-mkUnmanagedWindow :: Display -> Screen -> Window -> Position
-                  -> Position -> Dimension -> Dimension -> IO Window
-mkUnmanagedWindow d s rw x y w h = do
-  let visual = defaultVisualOfScreen s
-      attrmask = cWOverrideRedirect
-  allocaSetWindowAttributes $
-         \attributes -> do
-           set_override_redirect attributes True
-           createWindow d rw x y w h 0 (defaultDepthOfScreen s)
-                        inputOutput visual attrmask attributes
-
--- $utils
+  setForeground gc bgcolor
+  fillRectangle drw gc (fi bw) (fi bw) (wh - (bw * 2)) (ht - (bw * 2))
 
 -- | This function takes a list of possible completions and returns a
 -- completions function to be used with 'mkXPrompt'
