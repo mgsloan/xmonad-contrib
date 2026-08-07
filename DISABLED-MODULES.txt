@@ -1,16 +1,13 @@
-# Modules removed from xmonad-contrib.cabal's exposed-modules so that the
-# library builds against the river backend.
+# Modules not built against the river backend.
 #
-# The source files are untouched -- cabal does not compile a module it is not
-# told about -- so restoring one means putting its name back in the cabal file
-# and fixing whatever it needs.
+# A module is here either because it does not compile or because something it
+# imports does not.  The build cannot tell those apart, so neither does this
+# list: once one of them starts compiling, others may follow with no work of
+# their own.
 #
-# Two reasons a module is here, and the list does not distinguish them because
-# the build cannot either: either it fails to compile, or something it imports
-# does.  So the list is longer than the work: once a module below starts
-# compiling, others may follow with no work of their own.
-#
-# Regenerate the picture with tests/survey.sh.
+# Restoring one means putting its name back in xmonad-contrib.cabal and fixing
+# whatever it needs.  tests/survey.sh reports which is which.
+
 XMonad.Actions.ConstrainedResize
 XMonad.Actions.CopyWindow
 XMonad.Actions.CycleRecentWS
@@ -18,7 +15,6 @@ XMonad.Actions.CycleWindows
 XMonad.Actions.CycleWorkspaceByScreen
 XMonad.Actions.DynamicWorkspaceGroups
 XMonad.Actions.EasyMotion
-XMonad.Actions.FlexibleManipulate
 XMonad.Actions.FlexibleResize
 XMonad.Actions.FloatKeys
 XMonad.Actions.FloatSnap
@@ -36,19 +32,14 @@ XMonad.Actions.Prefix
 XMonad.Actions.Profiles
 XMonad.Actions.Repeatable
 XMonad.Actions.ShowText
-XMonad.Actions.SpawnOn
-XMonad.Actions.Submap
-XMonad.Actions.TagWindows
 XMonad.Actions.TiledWindowDragging
 XMonad.Actions.ToggleFullFloat
 XMonad.Actions.TopicSpace
 XMonad.Actions.TreeSelect
+XMonad.Actions.UpKeys
 XMonad.Actions.UpdateFocus
 XMonad.Actions.UpdatePointer
-XMonad.Actions.UpKeys
-XMonad.Actions.Warp
 XMonad.Actions.WindowBringer
-XMonad.Actions.WindowGo
 XMonad.Actions.WindowMenu
 XMonad.Actions.WindowNavigation
 XMonad.Actions.WorkspaceNames
@@ -76,10 +67,8 @@ XMonad.Hooks.EwmhDesktops
 XMonad.Hooks.FadeInactive
 XMonad.Hooks.FadeWindows
 XMonad.Hooks.FloatConfigureReq
-XMonad.Hooks.Focus
 XMonad.Hooks.ManageDebug
 XMonad.Hooks.ManageDocks
-XMonad.Hooks.ManageHelpers
 XMonad.Hooks.Minimize
 XMonad.Hooks.Modal
 XMonad.Hooks.OnPropertyChange
@@ -107,16 +96,16 @@ XMonad.Layout.ButtonDecoration
 XMonad.Layout.Combo
 XMonad.Layout.ComboP
 XMonad.Layout.Decoration
+XMonad.Layout.DecorationAddons
 XMonad.Layout.DecorationEx
 XMonad.Layout.DecorationEx.Common
+XMonad.Layout.DecorationEx.DwmGeometry
 XMonad.Layout.DecorationEx.Engine
 XMonad.Layout.DecorationEx.Geometry
-XMonad.Layout.DecorationEx.Widgets
 XMonad.Layout.DecorationEx.LayoutModifier
-XMonad.Layout.DecorationEx.TextEngine
-XMonad.Layout.DecorationEx.DwmGeometry
 XMonad.Layout.DecorationEx.TabbedGeometry
-XMonad.Layout.DecorationAddons
+XMonad.Layout.DecorationEx.TextEngine
+XMonad.Layout.DecorationEx.Widgets
 XMonad.Layout.DecorationMadness
 XMonad.Layout.DragPane
 XMonad.Layout.Drawer
@@ -127,10 +116,8 @@ XMonad.Layout.Fullscreen
 XMonad.Layout.Gaps
 XMonad.Layout.Groups.Examples
 XMonad.Layout.Groups.Wmii
-XMonad.Layout.IM
 XMonad.Layout.ImageButtonDecoration
 XMonad.Layout.IndependentScreens
-XMonad.Layout.LayoutBuilder
 XMonad.Layout.LayoutCombinators
 XMonad.Layout.LayoutHints
 XMonad.Layout.LayoutScreens
@@ -147,7 +134,6 @@ XMonad.Layout.SideBorderDecoration
 XMonad.Layout.SimpleDecoration
 XMonad.Layout.SimpleFloat
 XMonad.Layout.SimplestFloat
-XMonad.Layout.SortedLayout
 XMonad.Layout.Stoppable
 XMonad.Layout.SubLayouts
 XMonad.Layout.TabBarDecoration
@@ -167,22 +153,18 @@ XMonad.Util.ClickableWorkspaces
 XMonad.Util.Cursor
 XMonad.Util.DebugWindow
 XMonad.Util.DynamicScratchpads
-XMonad.Util.EZConfig
 XMonad.Util.ExclusiveScratchpads
 XMonad.Util.Grab
 XMonad.Util.Hacks
 XMonad.Util.Loggers
 XMonad.Util.Loggers.NamedScratchpad
-XMonad.Util.NamedActions
 XMonad.Util.NamedScratchpad
 XMonad.Util.NoTaskbar
 XMonad.Util.Paste
 XMonad.Util.RemoteWindows
 XMonad.Util.Replace
 XMonad.Util.Scratchpad
-XMonad.Util.SpawnOnce
 XMonad.Util.StringProp
 XMonad.Util.Themes
 XMonad.Util.Ungrab
-XMonad.Util.WindowProperties
 XMonad.Util.WindowState

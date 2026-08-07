@@ -18,12 +18,11 @@ module XMonad.Util.WindowProperties (
     -- $edsl
     Property(..), hasProperty, focusedHasProperty, allWithProperty,
     propertyToQuery,
-    -- * Helper functions
-    -- $helpers
-    getProp32, getProp32s)
+    -- * Differences under river
+    -- $river
+    )
 where
 
-import Foreign.C.Types (CLong)
 import XMonad
 import XMonad.Actions.TagWindows (hasTag)
 import XMonad.Prelude (filterM)
@@ -40,8 +39,6 @@ import qualified XMonad.StackSet as W
 data Property = Title String
               | ClassName String
               | Resource String
-              | Role String -- ^ WM_WINDOW_ROLE property
-              | Machine String -- ^ WM_CLIENT_MACHINE property
               | And Property Property
               | Or  Property Property
               | Not Property
@@ -65,10 +62,14 @@ focusedHasProperty p = do
         Nothing -> return False
 
 -- | Find all existing windows with specified property
+--
+-- The X11 version asked the server for the root window's children, which
+-- included windows xmonad had never managed.  river tells a window manager
+-- about every window there is, so the 'WindowSet' is the whole list -- with the
+-- difference that windows xmonad does not manage are no longer among them.
 allWithProperty :: Property -> X [Window]
-allWithProperty prop = withDisplay $ \dpy -> do
-    rootw <- asks theRoot
-    (_,_,wins) <- io $ queryTree dpy rootw
+allWithProperty prop = do
+    wins <- gets (W.allWindows . windowset)
     hasProperty prop `filterM` wins
 
 -- | Convert property to 'Query' 'Bool' (see "XMonad.ManageHook")
@@ -76,20 +77,25 @@ propertyToQuery :: Property -> Query Bool
 propertyToQuery (Title s) = title =? s
 propertyToQuery (Resource s) = resource =? s
 propertyToQuery (ClassName s) = className =? s
-propertyToQuery (Role s) = stringProperty "WM_WINDOW_ROLE" =? s
-propertyToQuery (Machine s) = stringProperty "WM_CLIENT_MACHINE" =? s
 propertyToQuery (And p1 p2) = propertyToQuery p1 <&&> propertyToQuery p2
 propertyToQuery (Or p1 p2) = propertyToQuery p1 <||> propertyToQuery p2
 propertyToQuery (Not p) = not <$> propertyToQuery p
 propertyToQuery (Const b) = return b
 propertyToQuery (Tagged s) = ask >>= \w -> liftX (hasTag s w)
 
--- $helpers
-
--- | Get a window property from atom
-getProp32 :: Atom -> Window -> X (Maybe [CLong])
-getProp32 a w = withDisplay $ \dpy -> io $ getWindowProperty32 dpy a w
-
--- | Get a window property from string
-getProp32s :: String -> Window -> X (Maybe [CLong])
-getProp32s str w = do { a <- getAtom str; getProp32 a w }
+-- $river
+--
+-- Wayland has no window properties, so the parts of this module that were
+-- really \"read an X property\" are gone rather than stubbed.
+--
+-- * @getProp32@ and @getProp32s@ read a numeric property off a window by atom.
+--   There is no atom, no property, and nothing to read.
+--
+-- * The @Role@ and @Machine@ constructors of 'Property' matched
+--   @WM_WINDOW_ROLE@ and @WM_CLIENT_MACHINE@, likewise.
+--
+-- What remains works: river reports a window's title and @app_id@, which is
+-- what 'Title', 'ClassName' and 'Resource' compare against -- @app_id@ standing
+-- in for both halves of X11's @WM_CLASS@, since Wayland has only the one
+-- string.  'Tagged' works because "XMonad.Actions.TagWindows" now keeps its
+-- tags in xmonad's own state.

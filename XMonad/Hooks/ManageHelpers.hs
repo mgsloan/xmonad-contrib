@@ -46,20 +46,14 @@ module XMonad.Hooks.ManageHelpers (
     (-?>), (/=?), (^?), (~?), ($?), (<==?), (</=?), (-->>), (-?>>),
     currentWs,
     windowTag,
-    isInProperty,
-    isKDETrayWindow,
     isFullscreen,
-    isMinimized,
     isDialog,
-    isNotification,
     pid,
-    desktop,
     transientTo,
     maybeToDefinite,
     MaybeManageHook,
     transience,
     transience',
-    clientLeader,
     sameBy,
     shiftToSame,
     shiftToSame',
@@ -71,18 +65,50 @@ module XMonad.Hooks.ManageHelpers (
     doFloatDep,
     doHideIgnore,
     doSink,
-    doLower,
-    doRaise,
     doFocus,
     Match,
+    -- * Differences under river
+    -- $river
 ) where
 
 import XMonad
 import XMonad.Prelude
 import qualified XMonad.StackSet as W
-import XMonad.Util.WindowProperties (getProp32s)
+import XMonad.River (RiverWindow (..))
+import qualified XMonad.River as River
 
+import Data.IORef (readIORef)
+import qualified Data.Map.Strict as M
 import System.Posix (ProcessID)
+
+-- | What river has told us about a window, if it is one river manages.
+askRiverWindow :: Query (Maybe RiverWindow)
+askRiverWindow = ask >>= \w -> liftX $ do
+    known <- io . readIORef =<< asks riverWindows
+    pure (M.lookup w known)
+
+-- $river
+--
+-- The queries here that were really \"read an X property off the window\" are
+-- gone, because Wayland has no window properties: @isInProperty@,
+-- @isKDETrayWindow@, @isMinimized@, @isNotification@, @desktop@ and
+-- @clientLeader@.
+--
+-- 'isNotification' deserves a word, because its absence is not a gap so much
+-- as a category error here: a notification under Wayland is a layer surface,
+-- and river never offers layer surfaces to the window manager as windows.  A
+-- notification will not reach a manage hook at all, so there is nothing for
+-- the query to have matched.
+--
+-- The three that remain are backed by things river does report:
+-- 'pid' by @river_window_v1.unreliable_pid@, 'transientTo' and 'isDialog' by
+-- its @parent@ event, and 'isFullscreen' by @fullscreen_requested@.
+--
+-- @doRaise@ and @doLower@ are gone for a different reason.  They restacked one
+-- window against the rest, and under river there is nothing to restack
+-- against: the window manager re-derives the whole stacking order from the
+-- layout on every render sequence, so a raise recorded in a manage hook would
+-- be overwritten before it was ever shown.
 
 -- | Denotes a side of a screen. @S@ stands for South, @NE@ for Northeast
 -- etc. @C@ stands for Center.
@@ -164,72 +190,40 @@ currentWs = liftX (withWindowSet $ return . W.currentTag)
 windowTag :: Query (Maybe WorkspaceId)
 windowTag = ask >>= \w -> liftX $ withWindowSet $ return . W.findTag w
 
--- | A predicate to check whether a window is a KDE system tray icon.
-isKDETrayWindow :: Query Bool
-isKDETrayWindow = ask >>= \w -> liftX $ do
-    r <- getProp32s "_KDE_NET_WM_SYSTEM_TRAY_WINDOW_FOR" w
-    return $ case r of
-        Just [_] -> True
-        _ -> False
-
--- | Helper to check if a window property contains certain value.
-isInProperty :: String -> String -> Query Bool
-isInProperty p v = ask >>= \w -> liftX $ do
-    va <- getAtom v
-    r <- getProp32s p w
-    return $ case r of
-        Just xs -> fromIntegral va `elem` xs
-        _ -> False
-
 -- | A predicate to check whether a window wants to fill the whole screen.
 -- See also 'doFullFloat'.
+--
+-- Backed by @river_window_v1.fullscreen_requested@, which river sends before
+-- the manage sequence it triggers -- so a manage hook gets the current answer.
+-- Note that this is what the window /asked/ for; honouring it is still the
+-- window manager's decision, exactly as under X11.
 isFullscreen :: Query Bool
-isFullscreen = isInProperty "_NET_WM_STATE" "_NET_WM_STATE_FULLSCREEN"
-
--- | A predicate to check whether a window is hidden (minimized).
--- See also "XMonad.Actions.Minimize".
-isMinimized :: Query Bool
-isMinimized = isInProperty "_NET_WM_STATE" "_NET_WM_STATE_HIDDEN"
+isFullscreen = maybe False rwFullscreen <$> askRiverWindow
 
 -- | A predicate to check whether a window is a dialog.
 --
--- See <https://specifications.freedesktop.org/wm/1.5/ar01s05.html#id-1.6.7>.
+-- Under X11 this read @_NET_WM_WINDOW_TYPE@.  Wayland has no window type; what
+-- it has is @xdg_toplevel.set_parent@, which river forwards as its @parent@
+-- event, and a toplevel with a parent is what a dialog is in practice.  The
+-- two agree on the cases that matter -- a modal dialog sets both -- and differ
+-- on a window that declares the type without setting a parent.
 isDialog :: Query Bool
-isDialog = isInProperty "_NET_WM_WINDOW_TYPE" "_NET_WM_WINDOW_TYPE_DIALOG"
+isDialog = isJust <$> transientTo
 
--- | A predicate to check whether a window is a notification.
+-- | This function returns 'Just' the process id of the window's client if
+-- known, 'Nothing' otherwise.
 --
--- See <https://specifications.freedesktop.org/wm/1.5/ar01s05.html#id-1.6.7>.
-isNotification :: Query Bool
-isNotification =
-  isInProperty "_NET_WM_WINDOW_TYPE" "_NET_WM_WINDOW_TYPE_NOTIFICATION"
-
--- | This function returns 'Just' the @_NET_WM_PID@ property for a
--- particular window if set, 'Nothing' otherwise.
---
--- See <https://specifications.freedesktop.org/wm/1.5/ar01s05.html#id-1.6.14>.
+-- Backed by @river_window_v1.unreliable_pid@.  river calls it unreliable
+-- because a client may lie about it or be proxied; @_NET_WM_PID@ was no better
+-- and for the same reason.
 pid :: Query (Maybe ProcessID)
-pid = ask >>= \w -> liftX $ getProp32s "_NET_WM_PID" w <&> \case
-    Just [x] -> Just (fromIntegral x)
-    _        -> Nothing
-
--- | This function returns 'Just' the @_NET_WM_DESKTOP@ property for a
--- particular window if set, 'Nothing' otherwise.
---
--- See <https://specifications.freedesktop.org/wm/1.5/ar01s05.html#id-1.6.6>.
-desktop :: Query (Maybe Int)
-desktop = ask >>= \w -> liftX $ getProp32s "_NET_WM_DESKTOP" w <&> \case
-    Just [x] -> Just (fromIntegral x)
-    _        -> Nothing
+pid = fmap fromIntegral . (rwPid =<<) <$> askRiverWindow
 
 -- | A predicate to check whether a window is Transient.
 -- It holds the result which might be the window it is transient to
 -- or it might be 'Nothing'.
 transientTo :: Query (Maybe Window)
-transientTo = do
-    w <- ask
-    d <- (liftX . asks) display
-    liftIO $ getTransientForHint d w
+transientTo = (rwParent =<<) <$> askRiverWindow
 
 -- | A convenience 'MaybeManageHook' that will check to see if a window
 -- is transient, and then move it to its parent.
@@ -239,18 +233,6 @@ transience = transientTo </=? Nothing -?>> maybe idHook doShiftTo
 -- | 'transience' set to a 'ManageHook'
 transience' :: ManageHook
 transience' = maybeToDefinite transience
-
--- | This function returns 'Just' the @WM_CLIENT_LEADER@ property for a
--- particular window if set, 'Nothing' otherwise. Note that, generally,
--- the window ID returned from this property (by firefox, for example)
--- corresponds to an unmapped or unmanaged dummy window. For this to be
--- useful in most cases, it should be used together with 'sameBy'.
---
--- See <https://tronche.com/gui/x/icccm/sec-5.html>.
-clientLeader :: Query (Maybe Window)
-clientLeader = ask >>= \w -> liftX $ getProp32s "WM_CLIENT_LEADER" w <&> \case
-    Just [x] -> Just (fromIntegral x)
-    _        -> Nothing
 
 -- | For a given window, 'sameBy' returns all windows that have a matching
 -- property (e.g. those obtained from Queries of 'clientLeader' and 'pid').
@@ -328,16 +310,6 @@ doHideIgnore = ask >>= \w -> liftX (hide w) >> doF (W.delete w)
 -- | Sinks a window
 doSink :: ManageHook
 doSink = doF . W.sink =<< ask
-
--- | Lower an unmanaged window. Useful together with 'doIgnore' to lower
--- special windows that for some reason don't do it themselves.
-doLower :: ManageHook
-doLower = ask >>= \w -> liftX $ withDisplay $ \dpy -> io (lowerWindow dpy w) >> mempty
-
--- | Raise an unmanaged window. Useful together with 'doIgnore' to raise
--- special windows that for some reason don't do it themselves.
-doRaise :: ManageHook
-doRaise = ask >>= \w -> liftX $ withDisplay $ \dpy -> io (raiseWindow dpy w) >> mempty
 
 -- | Focus a window (useful in 'XMonad.Hooks.EwmhDesktops.setActivateHook').
 doFocus :: ManageHook

@@ -41,8 +41,7 @@ module XMonad.Actions.WindowGo (
 
 import qualified Data.List as L (nub,sortBy)
 import XMonad.Prelude
-import XMonad (Query(), X(), ManageHook, WindowSet, withWindowSet, runQuery, liftIO, ask)
-import Graphics.X11 (Window)
+import XMonad (Query(), X(), ManageHook, Window, WindowSet, withWindowSet, runQuery, liftIO, ask)
 import XMonad.ManageHook
 import XMonad.Operations (windows)
 import XMonad.Prompt.Shell (getBrowser, getEditor)

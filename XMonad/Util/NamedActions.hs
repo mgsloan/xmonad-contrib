@@ -47,6 +47,7 @@ module XMonad.Util.NamedActions (
 
 
 import XMonad.Actions.Submap(submap)
+import XMonad.Util.XUtils (showMessageWindow)
 import XMonad.Prelude (groupBy, keyToString)
 import XMonad
 import Control.Arrow(Arrow((&&&), second))
@@ -187,7 +188,7 @@ showKm keybindings = padding $ do
 
 -- | An action to send to 'addDescrKeys' for showing the keybindings. See also 'showKm' and 'showKmSimple'
 xMessage :: [((KeyMask, KeySym), NamedAction)] -> NamedAction
-xMessage x = addName "Show Keybindings" $ xmessage $ unlines $ showKm x
+xMessage x = addName "Show Keybindings" $ showMessageWindow def (showKm x)
 
 -- | Merge the supplied keys with 'defaultKeysDescr', also adding a keybinding
 -- to run an action for showing the keybindings.

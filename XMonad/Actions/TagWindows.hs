@@ -27,15 +27,34 @@ module XMonad.Actions.TagWindows (
                  TagPrompt,
                  ) where
 
-import Control.Exception as E
+import qualified Data.Map as M
+import qualified Data.Set as S
 
 import XMonad hiding (workspaces)
 import XMonad.Prelude
 import XMonad.Prompt
 import XMonad.StackSet hiding (filter)
+import qualified XMonad.Util.ExtensibleState as XS
 
-econst :: Monad m => a -> IOException -> m a
-econst = const . return
+-- | Where the tags live.
+--
+-- Under X11 this module kept tags in a @_XMONAD_TAGS@ text property on the
+-- window itself, which is not available here: Wayland has no window
+-- properties, and river exposes a window's @app_id@ and @title@ but nothing a
+-- window manager may write to.  So the map is kept in xmonad's own state
+-- instead, which supports the same operations.
+--
+-- One behaviour does change, and it cannot be helped.  Under X11 tags survived
+-- @--restart@ because they lived on the window and the window outlived the
+-- window manager.  Here they do not: river hands out fresh object ids to the
+-- successor process, so a serialised 'Window' would name nothing.  That is
+-- also why this is a plain 'StateExtension' rather than a
+-- 'PersistentExtension' -- the latter is a no-op under river for exactly this
+-- reason.  Tags last for the session.
+newtype TagState = TagState (M.Map Window [String])
+
+instance ExtensionClass TagState where
+    initialValue = TagState M.empty
 
 -- $usage
 --
@@ -71,19 +90,25 @@ setTags :: [String] -> Window -> X ()
 setTags = setTag . unwords
 
 -- | set a tag for a window (overriding any previous tags)
---   writes it to the \"_XMONAD_TAGS\" window property
+--
+-- Tags are still split on whitespace, as the note above describes, so that
+-- @setTag@ and @setTags@ agree with the X11 versions about what \"a b\" means.
+--
+-- Writing is also when stale entries are dropped.  The X11 property went away
+-- with its window; a map does not, so a long session that tagged and closed
+-- many windows would otherwise leak an entry per window.  Pruning against the
+-- current 'windowset' costs nothing here and needs no destroy hook.
 setTag :: String -> Window -> X ()
-setTag s w = withDisplay $ \d ->
-    io $ internAtom d "_XMONAD_TAGS" False >>= setTextProperty d w s
+setTag s w = do
+    live <- gets (S.fromList . allWindows . windowset)
+    XS.modify' $ \(TagState m) -> TagState $ M.restrictKeys (upd m) (S.insert w live)
+  where
+    upd | null (words s) = M.delete w
+        | otherwise      = M.insert w (words s)
 
 -- | read all tags of a window
---   reads from the \"_XMONAD_TAGS\" window property
 getTags :: Window -> X [String]
-getTags w = withDisplay $ \d ->
-    io $ E.catch (internAtom d "_XMONAD_TAGS" False >>=
-                getTextProperty d w >>=
-                wcTextPropertyToTextList d)
-               (econst [[]]) <&> (words . unwords)
+getTags w = XS.gets $ \(TagState m) -> M.findWithDefault [] w m
 
 -- | check a window for the given tag
 hasTag :: String -> Window -> X Bool

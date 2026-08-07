@@ -104,6 +104,7 @@ library
                         XMonad.Actions.DynamicWorkspaceOrder
                         XMonad.Actions.DynamicWorkspaces
                         XMonad.Actions.FindEmptyWorkspace
+                        XMonad.Actions.FlexibleManipulate
                         XMonad.Actions.FocusNth
                         XMonad.Actions.Launcher
                         XMonad.Actions.MessageFeedback
@@ -122,8 +123,13 @@ library
                         XMonad.Actions.Sift
                         XMonad.Actions.SimpleDate
                         XMonad.Actions.SinkAll
+                        XMonad.Actions.SpawnOn
+                        XMonad.Actions.Submap
                         XMonad.Actions.SwapPromote
                         XMonad.Actions.SwapWorkspaces
+                        XMonad.Actions.TagWindows
+                        XMonad.Actions.Warp
+                        XMonad.Actions.WindowGo
                         XMonad.Actions.WithAll
                         XMonad.Actions.Workscreen
                         XMonad.Actions.WorkspaceCursors
@@ -135,7 +141,9 @@ library
                         XMonad.Doc.Extending
                         XMonad.Hooks.DynamicHooks
                         XMonad.Hooks.FloatNext
+                        XMonad.Hooks.Focus
                         XMonad.Hooks.InsertPosition
+                        XMonad.Hooks.ManageHelpers
                         XMonad.Hooks.Script
                         XMonad.Hooks.ToggleHook
                         XMonad.Hooks.WallpaperSetter
@@ -163,7 +171,9 @@ library
                         XMonad.Layout.Hidden
                         XMonad.Layout.HintedGrid
                         XMonad.Layout.HintedTile
+                        XMonad.Layout.IM
                         XMonad.Layout.IfMax
+                        XMonad.Layout.LayoutBuilder
                         XMonad.Layout.LayoutModifier
                         XMonad.Layout.LimitWindows
                         XMonad.Layout.Magnifier
@@ -188,6 +198,7 @@ library
                         XMonad.Layout.Roledex
                         XMonad.Layout.ShowWName
                         XMonad.Layout.Simplest
+                        XMonad.Layout.SortedLayout
                         XMonad.Layout.Spacing
                         XMonad.Layout.Spiral
                         XMonad.Layout.Square
@@ -222,6 +233,7 @@ library
                         XMonad.Util.CustomKeys
                         XMonad.Util.Dmenu
                         XMonad.Util.Dzen
+                        XMonad.Util.EZConfig
                         XMonad.Util.ExtensibleConf
                         XMonad.Util.ExtensibleState
                         XMonad.Util.Font
@@ -229,6 +241,7 @@ library
                         XMonad.Util.Image
                         XMonad.Util.Invisible
                         XMonad.Util.Minimize
+                        XMonad.Util.NamedActions
                         XMonad.Util.NamedWindows
                         XMonad.Util.Parser
                         XMonad.Util.PositionStore
@@ -238,11 +251,13 @@ library
                         XMonad.Util.Run
                         XMonad.Util.SessionStart
                         XMonad.Util.SpawnNamedPipe
+                        XMonad.Util.SpawnOnce
                         XMonad.Util.Stack
                         XMonad.Util.StickyWindows
                         XMonad.Util.Timer
                         XMonad.Util.TreeZipper
                         XMonad.Util.Types
+                        XMonad.Util.WindowProperties
                         XMonad.Util.WorkspaceCompare
                         XMonad.Util.XSelection
                         XMonad.Util.XUtils

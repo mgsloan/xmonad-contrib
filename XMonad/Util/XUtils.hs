@@ -23,6 +23,7 @@ module XMonad.Util.XUtils
       -- $usage
       withSimpleWindow
     , showSimpleWindow
+    , showMessageWindow
     , WindowConfig(..)
     , WindowRect(..)
     , averagePixels
@@ -49,12 +50,13 @@ import XMonad.Util.River.Compat
     , fillRectangle, freeGC, freePixmap, mapDrawable, pixelFromString
     , pixelToColour, setForeground, unmapDrawable )
 import qualified XMonad.Util.River.Draw as D
-import XMonad.River (warnUnimplemented)
+import XMonad.River (submapNextKey, warnUnimplemented)
 import XMonad.River.Wire (nullObject)
 import XMonad.Util.Font
 import XMonad.Util.Image
 import qualified XMonad.StackSet as W
 import Data.Bits ((.&.))
+import qualified Data.Map as M
 
 -- $usage
 -- See "XMonad.Layout.Tabbed" or "XMonad.Layout.DragPane" or
@@ -279,6 +281,22 @@ withSimpleWindow :: WindowConfig -> [String] -> X a -> X a
 withSimpleWindow wc strs doStuff = do
   w <- showSimpleWindow wc strs
   doStuff <* deleteWindow w
+
+-- | Show some lines of text until any key is pressed.
+--
+-- This is what the modules that reached for @xmessage@ want, and @xmessage@ is
+-- an X11 client that will not be there.  Rather than shell out to something
+-- else that might not be installed either, the window manager draws it, the
+-- same way it draws a prompt.
+--
+-- Dismissal reuses the submap machinery with no keys in it: a submap that
+-- recognises nothing takes the next key press, finds it unbound, and runs the
+-- default action -- which here is to take the window away.  See
+-- 'XMonad.River.submapNextKey'.
+showMessageWindow :: WindowConfig -> [String] -> X ()
+showMessageWindow wc strs = do
+  w <- showSimpleWindow wc strs
+  submapNextKey M.empty (deleteWindow w)
 
 -- This stuff is not exported
 

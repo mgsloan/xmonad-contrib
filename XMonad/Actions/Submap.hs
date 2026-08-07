@@ -20,15 +20,17 @@ module XMonad.Actions.Submap (
                              visualSubmap,
                              visualSubmapSorted,
                              submapDefault,
-                             submapDefaultWithKey,
 
                              -- * Utilities
                              subName,
+
+                             -- * Differences under river
+                             -- $river
                             ) where
-import Data.Bits
 import qualified Data.Map as M
 import XMonad hiding (keys)
-import XMonad.Prelude (fix, fromMaybe, keyToString, cleanKeyMask)
+import XMonad.Prelude (keyToString)
+import XMonad.River (submapNextKey)
 import XMonad.Util.XUtils
 
 {- $usage
@@ -106,9 +108,14 @@ visualSubmapSorted :: ([((KeyMask, KeySym), String)] -> [((KeyMask, KeySym), Str
              -> M.Map (KeyMask, KeySym) (String, X ())
                              -- ^ A map @keybinding -> (description, action)@.
              -> X ()
-visualSubmapSorted sorted wc keys =
-    withSimpleWindow wc descriptions waitForKeyPress >>= \(m', s) ->
-        maybe (pure ()) snd (M.lookup (m', s) keys)
+-- The window cannot be closed by bracketing the wait, as the X11 version did
+-- with 'withSimpleWindow': under river a submap returns before the key is
+-- pressed, so bracketing would take the window away immediately.  It is torn
+-- down by whichever branch ends the submap instead.
+visualSubmapSorted sorted wc keys = do
+    w <- showSimpleWindow wc descriptions
+    let close = deleteWindow w
+    submapNextKey (M.map ((close >>) . snd) keys) close
   where
     descriptions :: [String]
     descriptions =
@@ -122,39 +129,24 @@ subName = (,)
 
 -- | Like 'submap', but executes a default action if the key did not match.
 submapDefault :: X () -> M.Map (KeyMask, KeySym) (X ()) -> X ()
-submapDefault = submapDefaultWithKey . const
+submapDefault = flip submapNextKey
 
--- | Like 'submapDefault', but sends the unmatched key to the default
--- action as argument.
-submapDefaultWithKey :: ((KeyMask, KeySym) -> X ())
-                     -> M.Map (KeyMask, KeySym) (X ())
-                     -> X ()
-submapDefaultWithKey defAction keys = waitForKeyPress >>=
-    \(m', s) -> fromMaybe (defAction (m', s)) (M.lookup (m', s) keys)
-
------------------------------------------------------------------------
--- Internal stuff
-
-waitForKeyPress :: X (KeyMask, KeySym)
-waitForKeyPress = do
-    XConf{ theRoot = root, display = dpy } <- ask
-
-    io $ do grabKeyboard dpy root False grabModeAsync grabModeAsync currentTime
-            grabPointer dpy root False buttonPressMask grabModeAsync grabModeAsync
-                        none none currentTime
-
-    (m, s) <- io $ allocaXEvent $ \p -> fix $ \nextkey -> do
-        maskEvent dpy (keyPressMask .|. buttonPressMask) p
-        ev <- getEvent p
-        case ev of
-          KeyEvent { ev_keycode = code, ev_state = m } -> do
-            keysym <- keycodeToKeysym dpy code 0
-            if isModifierKey keysym
-                then nextkey
-                else return (m, keysym)
-          _ -> return (0, 0)
-    m' <- cleanKeyMask <*> pure m
-    io $ do ungrabPointer dpy currentTime
-            ungrabKeyboard dpy currentTime
-            sync dpy False
-    pure (m', s)
+-- $river
+--
+-- Two things about this module differ from the X11 original, both forced by
+-- river having no keyboard grab.  See 'XMonad.River.submapNextKey', which is
+-- what everything here is built on.
+--
+-- The first is that a submap returns immediately rather than when the key is
+-- pressed: a binding may only be created during a manage sequence and cannot
+-- fire until that sequence ends, so waiting inside one for a key would be
+-- waiting for something river is not yet allowed to send.  Every use of
+-- @submap@ in the wild puts it last in an action, including the one
+-- 'XMonad.Util.EZConfig.mkKeymap' generates for a key sequence, so this is not
+-- normally visible.
+--
+-- The second is that @submapDefaultWithKey@ is gone.  It passed the unmatched
+-- key to the default action, and river will not say which key that was:
+-- @river_xkb_bindings_seat_v1.ate_unbound_key@ reports that a key was
+-- swallowed and carries no arguments.  'submapDefault', which ignores the key,
+-- is unaffected.

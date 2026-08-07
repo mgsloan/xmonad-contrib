@@ -24,9 +24,11 @@ module XMonad.Actions.FlexibleManipulate (
 ) where
 
 import XMonad
-import XMonad.Prelude ((<&>), fi)
+import XMonad.Prelude (fi)
+import XMonad (whenJust)
+import XMonad.River (moveResizeWindow, pointerPosition, windowRect)
 import qualified Prelude as P
-import Prelude (Double, Integer, Ord (..), const, fromIntegral, fst, id, otherwise, round, snd, uncurry, ($))
+import Prelude (Double, Integer, Ord (..), const, fromIntegral, fst, id, otherwise, round, snd, ($))
 
 -- $usage
 -- First, add this import to your @xmonad.hs@:
@@ -79,13 +81,19 @@ position = const 0.5
 
 -- | Given an interpolation function, implement an appropriate window
 --   manipulation action.
+-- Under river both of the X11 queries this used are gone: the window's
+-- geometry comes from the layout rather than the server, and the pointer's
+-- position is whatever river last reported.  Size hints are no longer applied
+-- here either -- 'XMonad.River.moveResizeWindow' does it, using the bounds
+-- river reported for the window.
 mouseWindow :: (Double -> Double) -> Window -> X ()
-mouseWindow f w = whenX (isClient w) $ withDisplay $ \d ->
-  withWindowAttributes d w $ \wa -> do
-    let wpos  = (fi (wa_x wa), fi (wa_y wa))
-        wsize = (fi (wa_width wa), fi (wa_height wa))
-    sh <- io $ getWMNormalHints d w
-    pointer <- io $ queryPointer d w <&> pointerPos
+mouseWindow f w = whenX (isClient w) $ do
+  mr <- windowRect w
+  mp <- pointerPosition
+  whenJust ((,) P.<$> mr P.<*> mp) $ \(r, (px, py)) -> do
+    let wpos  = (fi (rect_x r), fi (rect_y r))
+        wsize = (fi (rect_width r), fi (rect_height r))
+        pointer = (fi px, fi py) :: Pnt
 
     let uv = (pointer - wpos) / wsize
         fc = mapP f uv
@@ -97,15 +105,13 @@ mouseWindow f w = whenX (isClient w) $ withDisplay $ \d ->
             npos = wpos + offset * atl
             nbr = (wpos + wsize) + offset * abr
             ntl = minP (nbr - (32, 32)) npos    --minimum size
-            nwidth = applySizeHintsContents sh $ mapP (round :: Double -> Integer) (nbr - ntl)
-        io $ moveResizeWindow d w (round $ fst ntl) (round $ snd ntl) `uncurry` nwidth
+            (nw, nh) = mapP (round :: Double -> Integer) (nbr - ntl)
+        moveResizeWindow w (Rectangle (round $ fst ntl) (round $ snd ntl)
+                                      (fromIntegral nw) (fromIntegral nh))
         float w)
         (float w)
 
     float w
-
-  where
-    pointerPos (_,_,_,px,py,_,_,_) = (fromIntegral px,fromIntegral py) :: Pnt
 
 -- I'd rather I didn't have to do this, but I hate writing component 2d math
 type Pnt = (Double, Double)

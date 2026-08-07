@@ -46,6 +46,7 @@ module XMonad.Util.EZConfig (
 
 import XMonad
 import XMonad.Actions.Submap
+import XMonad.Util.XUtils (showMessageWindow)
 import XMonad.Prelude
 
 import XMonad.Util.NamedActions
@@ -538,7 +539,7 @@ parseSpecial = do _ <- char '<'
 checkKeymap :: XConfig l -> [(String, a)] -> X ()
 checkKeymap conf km = warn (doKeymapCheck conf km)
   where warn ([],[])   = return ()
-        warn (bad,dup) = xmessage $ "Warning:\n"
+        warn (bad,dup) = showMessageWindow def . lines $ "Warning:\n"
                             ++ msg "bad" bad ++ "\n"
                             ++ msg "duplicate" dup
         msg _ [] = ""
