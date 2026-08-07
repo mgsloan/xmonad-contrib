@@ -175,7 +175,86 @@ tests.
 
 ---
 
-## 4. Smaller things
+## 4. GridSelect needs its interaction model inverted
+
+**Repo:** here — `XMonad/Actions/GridSelect.hs` (792 lines)
+
+The largest single item left: it gates 13 modules, including
+`Layout.ButtonDecoration`, `Layout.DecorationAddons`, `Actions.WindowMenu` and
+most of `DecorationEx`.
+
+### Why it is not a small port
+
+The blocking loop is not an implementation detail here, it is the documented
+config API. `makeXEventhandler` sits in `maskEvent` waiting for a key, and
+every entry in the default keymap ends by recursing into it:
+
+```haskell
+,((0,xK_Left), move (-1,0) >> defaultNavigation)
+```
+
+`gs_navigate :: TwoD a (Maybe a)` is therefore *the whole loop*, supplied by the
+config, and the module's haddock teaches people to write it that way.
+`substringSearch` is a second loop nested inside the first, entered on `/` and
+left on Return.
+
+Nothing may block under river -- a binding may only be created during a manage
+sequence and cannot fire until that sequence finishes -- so the loop has to be
+inverted into a handler the backend calls per key. That is the same change
+already made to `XMonad.Actions.Submap` and `XMonad.Actions.Repeatable`, but
+here it is visible in every config that customises navigation.
+
+### The shape
+
+```haskell
+data Navigation a = Continue | Cancel | Select a
+
+gs_navigate :: (KeySym, String, KeyMask) -> TwoD a (Navigation a)
+```
+
+- Keymap entries lose their `>> defaultNavigation` tail and end `>> pure Continue`.
+- `select` and `cancel` return `Navigation a` rather than `Maybe a`; `select`
+  with nothing under the cursor becomes `Cancel`, which is what returning
+  `Nothing` meant.
+- `makeXEventhandler` goes. `shadowWithKeymap` stays, retyped.
+- `substringSearch` becomes a mode rather than a nested loop: a
+  `td_searching :: Bool` in `TwoDState` (or a handler stored in the state, if
+  a config might want its own submodes), which the top-level dispatch consults.
+- `gridselect` takes a continuation:
+  `GSConfig a -> [(String,a)] -> (Maybe a -> X ()) -> X ()`. Likewise
+  `gridselectWindow`. Every other public wrapper -- `withSelectedWindow`,
+  `goToSelected`, `bringSelected`, `spawnSelected`, `runSelectedAction`,
+  `gridselectWorkspace'` -- already ends in `X ()` and consumes the result
+  immediately, so those signatures do not change.
+
+### What is already easy
+
+Two things that look like obstacles are not:
+
+- **The drawing needs no rewrite of substance.** `XMonad.Util.River.Compat`
+  takes no `Display` at all -- `createGC :: IO GC`,
+  `fillRectangle :: Drawable -> GC -> ...` -- and `stringToPixel` ignores the
+  one it is passed. So `drawWinBox` drops `withDisplay` and becomes IO against
+  a Drawable. `initColor` becomes `stringToPixel`.
+- **`TwoD` can stay over `X`.** The prompt had to move to `StateT ... IO`
+  because it runs on its own thread; GridSelect does not need to. Each key
+  arrives as a callback that posts an `X` action to the event loop, which reads
+  the state from an `IORef`, runs one handler, and writes it back. That keeps
+  `gs_colorizer :: a -> Bool -> X (String, String)` working, which is the one
+  part of the config API that genuinely needs `X`.
+
+So the surface is `startClient` with `csKeyboard = True` and an offscreen
+Pixmap replayed by `csDraw`, exactly as `XMonad.Prompt` does it -- and the
+`finally` discipline from §1 applies, since this takes an exclusive keyboard
+grab too.
+
+### Difficulty
+
+Not hard, but not small, and not safely done in a hurry: it touches the
+module's public interaction API in ways every custom `gs_navigate` will feel.
+Budget a session.
+
+## 5. Smaller things
 
 - **`XMonad.Layout.Decoration` clicks do nothing.** `handleMouseFocusDrag` is a
   `warnUnimplemented`: river reports button presses against a `river_window_v1`,
@@ -185,6 +264,12 @@ tests.
   `river_pointer_binding_v1.pressed` is the press but carries no position.
   Correlating them is guesswork. It gates title-bar dragging and every button
   widget in `ButtonDecoration` and `DecorationEx`.
+
+- **`XMonad.Actions.MostRecentlyUsed` needs a conclusion hook.**
+  `XMonad.Actions.Repeatable` now takes one, because "the line after the call"
+  runs before the keys are pressed rather than after -- and this module clears
+  a re-entry flag there. It fails on `UnmapEvent` first, so the flag is not yet
+  the thing to fix.
 
 - **`XMonad.Hooks.UrgencyHook` has no input path.** Only `askUrgent` and
   `doAskUrgent` can mark a window urgent; a window cannot mark itself. Wayland's
