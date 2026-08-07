@@ -34,6 +34,7 @@ module XMonad.Util.River.Draw
     , Canvas(..)
     , withCanvas
     , fillCanvas
+    , fillRect
     , drawText
       -- * Colours
     , Colour
@@ -214,6 +215,13 @@ fillCanvas (r, g, b, a) _ = do
   setSourceRGBA r g b a
   paint
   setOperator OperatorOver
+
+-- | Fill a rectangle with one colour.
+fillRect :: Colour -> Int -> Int -> Int -> Int -> Render ()
+fillRect (r, g, b, a) x y w h = do
+  setSourceRGBA r g b a
+  rectangle (fromIntegral x) (fromIntegral y) (fromIntegral w) (fromIntegral h)
+  fill
 
 -- | Draw a string with its top-left corner at the given position.
 drawText :: Font -> Colour -> Int -> Int -> String -> Render ()

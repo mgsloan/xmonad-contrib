@@ -23,6 +23,8 @@ module XMonad.Util.Image
 
 import XMonad
 import XMonad.Prelude
+import XMonad.Util.River.Compat (Point(..), Drawable, GC, drawOn)
+import qualified XMonad.Util.River.Draw as D
 import XMonad.Util.Font (stringToPixel)
 
 -- | Placement of the icon in the title bar
@@ -76,14 +78,19 @@ movePoint x y (Point a b) = Point (a + x) (b + y)
 movePoints :: Position -> Position -> [Point] -> [Point]
 movePoints x y = map (movePoint x y)
 
--- | Draw an image into a X surface
+-- | Draw an image onto a drawable.
+--
+-- Upstream fills the background and then plots the set pixels with
+-- @drawPoints@.  Cairo has no point primitive, so each becomes a filled unit
+-- rectangle -- indistinguishable at icon sizes, and it avoids introducing a
+-- second buffer format for one call.
 drawIcon :: (Functor m, MonadIO m) => Display -> Drawable -> GC -> String
-            ->String -> Position -> Position -> [[Bool]] -> m ()
-drawIcon dpy drw gc fc bc x y icon = do
+            -> String -> Position -> Position -> [[Bool]] -> m ()
+drawIcon _ drw _ fc bc x y icon = io $ do
   let (i_w, i_h) = imageDims icon
-  fcolor <- stringToPixel dpy fc
-  bcolor <- stringToPixel dpy bc
-  io $ setForeground dpy gc bcolor
-  io $ fillRectangle dpy drw gc x y (fi i_w) (fi i_h)
-  io $ setForeground dpy gc fcolor
-  io $ drawPoints dpy drw gc (movePoints x y (iconToPoints icon)) coordModeOrigin
+      fg = D.parseColour fc
+      bg = D.parseColour bc
+  drawOn drw $ \_ -> do
+    D.fillRect bg (fi x) (fi y) (fi i_w) (fi i_h)
+    sequence_ [ D.fillRect fg (fi px) (fi py) 1 1
+              | Point px py <- movePoints x y (iconToPoints icon) ]

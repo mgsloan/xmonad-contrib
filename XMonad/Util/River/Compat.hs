@@ -47,6 +47,8 @@ module XMonad.Util.River.Compat
     ( -- * Drawables
       Drawable
     , Pixmap
+    , Point(..)
+    , EventMask
     , createDrawableWindow
     , createPixmap
     , freePixmap
@@ -79,7 +81,7 @@ module XMonad.Util.River.Compat
 import Control.Monad (forM_, when)
 import Data.Bits (shiftL, shiftR, (.&.), (.|.))
 import Data.IORef
-import Data.Word (Word32)
+import Data.Word (Word32, Word64)
 import Graphics.Rendering.Cairo (Render)
 import System.IO.Unsafe (unsafePerformIO)
 import qualified Data.Map.Strict as M
@@ -91,6 +93,23 @@ import XMonad.River.Wire (ObjectId (..))
 import qualified XMonad.River.Surface as R
 
 import XMonad.Util.River.Draw (Canvas, Colour, withCanvas)
+
+-- | An event mask.
+--
+-- Present only so that 'XMonad.Util.XUtils.createNewWindow' keeps its
+-- signature.  River delivers exactly the events the management protocol
+-- defines and there is nothing to select, so a value of this type carries no
+-- information and is always ignored -- the same treatment @clientMask@ and
+-- @rootMask@ get, and for the same reason.
+type EventMask = Word64
+
+-- | A point, as X11 spelled it.
+--
+-- Two coordinates; it ports without argument.  Defined here rather than in
+-- xmonad-river because nothing but drawing code uses it, and xmonad itself has
+-- no drawing code.
+data Point = Point { pt_x :: !Position, pt_y :: !Position }
+  deriving (Eq, Show, Read)
 
 -- | Something that can be drawn on.  A window or an offscreen pixmap, as in
 -- X11, and as in X11 the same type.

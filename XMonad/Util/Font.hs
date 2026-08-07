@@ -1,8 +1,7 @@
-{-# LANGUAGE CPP #-}
 ----------------------------------------------------------------------------
 -- |
 -- Module      :  XMonad.Util.Font
--- Description :  A module for abstracting a font facility over Core fonts and Xft.
+-- Description :  A module for abstracting a font facility, over pango.
 -- Copyright   :  (c) 2007 Andrea Rossato and Spencer Janssen
 -- License     :  BSD-style (see xmonad/LICENSE)
 --
@@ -10,7 +9,17 @@
 -- Stability   :  unstable
 -- Portability :  unportable
 --
--- A module for abstracting a font facility over Core fonts and Xft
+-- The river implementation.  Upstream abstracts over X core fonts and Xft;
+-- there is one backend here, pango, because Wayland has no font server to
+-- choose between.  Every exported signature is upstream's, so callers --
+-- "XMonad.Layout.Decoration", "XMonad.Prompt", "XMonad.Actions.GridSelect" and
+-- the rest -- need no changes.
+--
+-- Two of upstream's exports are gone rather than stubbed:
+-- @initCoreFont@\/@releaseCoreFont@ and @initUtf8Font@\/@releaseUtf8Font@
+-- return an X11 @FontStruct@ and @FontSet@, which name server-side objects
+-- that do not exist here and cannot be faked into existence.  'initXMF' is
+-- what everything actually calls.
 --
 -----------------------------------------------------------------------------
 
@@ -20,10 +29,6 @@ module XMonad.Util.Font
       XMonadFont(..)
     , initXMF
     , releaseXMF
-    , initCoreFont
-    , releaseCoreFont
-    , initUtf8Font
-    , releaseUtf8Font
     , Align (..)
     , stringPosition
     , textWidthXMF
@@ -36,206 +41,118 @@ module XMonad.Util.Font
 
 import XMonad
 import XMonad.Prelude
-import Foreign
-import Control.Exception as E
+import Data.Int (Int32)
 import Text.Printf (printf)
 
-#ifdef XFT
-import qualified Data.List.NonEmpty as NE
-import Graphics.X11.Xrender
-import Graphics.X11.Xft
-#endif
+import XMonad.Util.River.Compat
+    (Drawable, GC, Pixel, drawOn, gcBackground, pixelFromString, pixelToColour)
+import qualified XMonad.Util.River.Draw as D
 
--- Hide the Core Font/Xft switching here
-data XMonadFont = Core FontStruct
-                | Utf8 FontSet
-#ifdef XFT
-                | Xft  (NE.NonEmpty XftFont)
-#endif
+-- | A font, as pango understands it.
+--
+-- One constructor where upstream has three.  Pango descriptions are immutable
+-- and cheap, so unlike an X11 @FontStruct@ there is nothing to open and
+-- nothing to release -- which is why 'releaseXMF' has nothing to do.
+newtype XMonadFont = XMonadFont D.Font
 
 -- $usage
 -- See "XMonad.Layout.Tabbed" or "XMonad.Prompt" for usage examples
 
 -- | Get the Pixel value for a named color: if an invalid name is
 -- given the black pixel will be returned.
+--
+-- Under X11 this asked the server to resolve the name against a colormap.
+-- There is no server and no colormap here, so the string is parsed directly;
+-- see 'XMonad.Util.River.Draw.parseColour' for which names survive.
 stringToPixel :: (Functor m, MonadIO m) => Display -> String -> m Pixel
-stringToPixel d s = fromMaybe fallBack <$> io getIt
-    where getIt    = initColor d s
-          fallBack = blackPixel d (defaultScreen d)
+stringToPixel _ s = pure (pixelFromString (D.parseColour s))
 
 -- | Convert a @Pixel@ into a @String@.
 --
--- This function removes any alpha channel from the @Pixel@, because X11
--- mishandles alpha channels and produces black.
+-- Upstream drops the alpha channel here, because X11 mishandles it and
+-- produces black.  That is an X server bug rather than a property of colour,
+-- and it does not apply: the channel is kept.
 pixelToString :: (MonadIO m) => Display -> Pixel -> m String
-pixelToString d p = do
-    let cm = defaultColormap d (defaultScreen d)
-    (Color _ r g b _) <- io (queryColor d cm $ Color (p .&. 0x00FFFFFF) 0 0 0 0)
-    return ("#" ++ hex r ++ hex g ++ hex b)
+pixelToString _ p =
+  let (r, g, b, _) = pixelToColour p
+  in pure (printf "#%02x%02x%02x" (ch r) (ch g) (ch b))
   where
-    -- NOTE: The @Color@ type has 16-bit values for red, green, and
-    -- blue, even though the actual type in X is only 8 bits wide.  It
-    -- seems that the upper and lower 8-bit sections of the @Word16@
-    -- values are the same.  So, we just discard the lower 8 bits.
-    --
-    -- (Strictly, X11 supports 16-bit values but no visual supported
-    -- by XOrg does. It is still correct to discard the lower bits, as
-    -- they are not guaranteed to be meaningful in such visuals.)
-    hex = printf "%02x" . (`shiftR` 8)
+    ch :: Double -> Int
+    ch v = round (v * 255)
 
-econst :: a -> IOException -> a
-econst = const
-
--- | Given a fontname returns the font structure. If the font name is
---  not valid the default font will be loaded and returned.
-initCoreFont :: String -> X FontStruct
-initCoreFont s = do
-  d <- asks display
-  io $ E.catch (getIt d) (fallBack d)
-      where getIt    d = loadQueryFont d s
-            fallBack d = econst $ loadQueryFont d "-misc-fixed-*-*-*-*-10-*-*-*-*-*-*-*"
-
-releaseCoreFont :: FontStruct -> X ()
-releaseCoreFont fs = do
-  d <- asks display
-  io $ freeFont d fs
-
-initUtf8Font :: String -> X FontSet
-initUtf8Font s = do
-  d <- asks display
-  (_,_,fs) <- io $ E.catch (getIt d) (fallBack d)
-  return fs
-      where getIt    d = createFontSet d s
-            fallBack d = econst $ createFontSet d "-misc-fixed-*-*-*-*-10-*-*-*-*-*-*-*"
-
-releaseUtf8Font :: FontSet -> X ()
-releaseUtf8Font fs = do
-  d <- asks display
-  io $ freeFontSet d fs
-
--- | When initXMF gets a font name that starts with 'xft:' it switches to the Xft backend
--- Example: 'xft: Sans-10'
+-- | Get a font.
+--
+-- Accepts pango's own syntax, the @xft:@ spelling most configs contain, and an
+-- XLFD -- which names a bitmap font that does not exist under Wayland and so
+-- falls back to a default of the same rough size.  Silently, because a window
+-- manager that refuses to start over a decoration's font choice is worse than
+-- one that picks a reasonable substitute.
 initXMF :: String -> X XMonadFont
-initXMF s =
-#ifndef XFT
-  Utf8 <$> initUtf8Font s
-#else
-  if xftPrefix `isPrefixOf` s then
-     do dpy <- asks display
-        let fonts = case wordsBy (== ',') (drop (length xftPrefix) s) of
-              []       -> fallback :| []  -- NE.singleton only in base 4.15
-              (x : xs) -> x :| xs
-        fb <- io $ openFont dpy fallback
-        fmap Xft . io $ traverse (\f -> E.catch (openFont dpy f) (econst $ pure fb))
-                                 fonts
-  else Utf8 <$> initUtf8Font s
- where
-  xftPrefix = "xft:"
-  fallback  = "xft:monospace"
-  openFont dpy str = xftFontOpen dpy (defaultScreenOfDisplay dpy) str
-  wordsBy p str = case dropWhile p str of
-    ""   -> []
-    str' -> w : wordsBy p str''
-     where (w, str'') = break p str'
-#endif
+initXMF s = XMonadFont <$> D.parseFont s
 
+-- | Nothing to release.  Kept so call sites need not change.
 releaseXMF :: XMonadFont -> X ()
-#ifdef XFT
-releaseXMF (Xft xftfonts) = do
-  dpy <- asks display
-  io $ mapM_ (xftFontClose dpy) xftfonts
-#endif
-releaseXMF (Utf8 fs) = releaseUtf8Font fs
-releaseXMF (Core fs) = releaseCoreFont fs
+releaseXMF _ = pure ()
 
 textWidthXMF :: MonadIO m => Display -> XMonadFont -> String -> m Int
-textWidthXMF _   (Utf8 fs) s = return $ fi $ wcTextEscapement fs s
-textWidthXMF _   (Core fs) s = return $ fi $ textWidth fs s
-#ifdef XFT
-textWidthXMF dpy (Xft xftdraw) s = liftIO $ do
-#if MIN_VERSION_X11_xft(0, 3, 4)
-    gi <- xftTextAccumExtents dpy (toList xftdraw) s
-#else
-    gi <- xftTextExtents dpy (NE.head xftdraw) s
-#endif
-    return $ xglyphinfo_xOff gi
-#endif
+textWidthXMF _ (XMonadFont f) s = fst <$> D.measureText f s
 
-textExtentsXMF :: MonadIO m => XMonadFont -> String -> m (Int32,Int32)
-textExtentsXMF (Utf8 fs) s = do
-  let (_,rl)  = wcTextExtents fs s
-      ascent  = fi $ - (rect_y rl)
-      descent = fi $ rect_height rl + fi (rect_y rl)
-  return (ascent, descent)
-textExtentsXMF (Core fs) s = do
-  let (_,a,d,_) = textExtents fs s
-  return (a,d)
-#ifdef XFT
-#if MIN_VERSION_X11_xft(0, 3, 4)
-textExtentsXMF (Xft xftfonts) _ = io $ do
-  ascent  <- fi <$> xftfont_max_ascent  xftfonts
-  descent <- fi <$> xftfont_max_descent xftfonts
-#else
-textExtentsXMF (Xft xftfonts) _ = io $ do
-  ascent  <- fi <$> xftfont_ascent  (NE.head xftfonts)
-  descent <- fi <$> xftfont_descent (NE.head xftfonts)
-#endif
-  return (ascent, descent)
-#endif
+-- | Ascent and descent.
+--
+-- Of the font rather than of the string, which is what callers laying out a
+-- row of decorations need: every tab in a bar has to share a baseline whether
+-- or not its title happens to contain a descender.
+textExtentsXMF :: MonadIO m => XMonadFont -> String -> m (Int32, Int32)
+textExtentsXMF (XMonadFont f) _ = do
+  (a, d) <- D.fontMetrics f
+  pure (fi a, fi d)
 
 -- | String position
 data Align = AlignCenter | AlignRight | AlignLeft | AlignRightOffset Int
                 deriving (Show, Read)
 
 -- | Return the string x and y 'Position' in a 'Rectangle', given a
--- 'FontStruct' and the 'Align'ment
+-- font and the 'Align'ment.
+--
+-- Unchanged from upstream: it is arithmetic over measurements, and the
+-- measurements now come from pango.
 stringPosition :: (Functor m, MonadIO m) => Display -> XMonadFont -> Rectangle -> Align -> String -> m (Position,Position)
 stringPosition dpy fs (Rectangle _ _ w h) al s = do
   width <- textWidthXMF dpy fs s
   (a,d) <- textExtentsXMF fs s
-  let y = fi $ ((h - fi (a + d)) `div` 2) + fi a;
+  let y = fi $ ((h - fi (a + d)) `div` 2) + fi a
       x = case al of
             AlignCenter -> fi (w `div` 2) - fi (width `div` 2)
             AlignLeft   -> 1
-            AlignRight  -> fi (w - (fi width + 1));
-            AlignRightOffset offset -> fi (w - (fi width + 1)) - fi offset;
+            AlignRight  -> fi (w - (fi width + 1))
+            AlignRightOffset offset -> fi (w - (fi width + 1)) - fi offset
   return (x,y)
 
+-- | Draw a string on a drawable.
+--
+-- The @y@ upstream passes is a baseline, because that is what
+-- @drawImageString@ took; pango positions a layout by its top-left corner, so
+-- the ascent is subtracted here.  Getting this wrong shifts every decoration's
+-- text down by most of a line, which is the sort of thing that looks like a
+-- font problem and is not.
+--
+-- Nothing is rasterised now.  The operation is queued on the drawable and
+-- replayed when it is committed, which is what lets a caller paint a window in
+-- one function and write into it in another -- exactly as an unflushed X
+-- connection behaved.
 printStringXMF :: (Functor m, MonadIO m) => Display -> Drawable -> XMonadFont -> GC -> String -> String
             -> Position -> Position -> String  -> m ()
-printStringXMF d p (Core fs) gc fc bc x y s = io $ do
-    setFont d gc $ fontFromFontStruct fs
-    [fc',bc'] <- mapM (stringToPixel d) [fc,bc]
-    setForeground d gc fc'
-    setBackground d gc bc'
-    drawImageString d p gc x y s
-printStringXMF d p (Utf8 fs) gc fc bc x y s = io $ do
-    [fc',bc'] <- mapM (stringToPixel d) [fc,bc]
-    setForeground d gc fc'
-    setBackground d gc bc'
-    io $ wcDrawImageString d p fs gc x y s
-#ifdef XFT
-printStringXMF dpy drw fs@(Xft fonts) gc fc bc x y s = do
-  let screen   = defaultScreenOfDisplay dpy
-      colormap = defaultColormapOfScreen screen
-      visual   = defaultVisualOfScreen screen
-  bcolor <- stringToPixel dpy bc
-  (a,d)  <- textExtentsXMF fs s
-#if MIN_VERSION_X11_xft(0, 3, 4)
-  gi <- io $ xftTextAccumExtents dpy (toList fonts) s
-#else
-  gi <- io $ xftTextExtents dpy (NE.head fonts) s
-#endif
-  io $ setForeground dpy gc bcolor
-  io $ fillRectangle dpy drw gc (x - fi (xglyphinfo_x gi))
-                                (y - fi a)
-                                (fi $ xglyphinfo_xOff gi)
-                                (fi $ a + d)
-  io $ withXftDraw dpy drw visual colormap $
-         \draw -> withXftColorName dpy visual colormap fc $
-#if MIN_VERSION_X11_xft(0, 3, 4)
-                   \color -> xftDrawStringFallback draw color (toList fonts) (fi x) (fi y) s
-#else
-                   \color -> xftDrawString draw color (NE.head fonts) x y s
-#endif
-#endif
+printStringXMF _ d (XMonadFont f) gc fc bc x y s = io $ do
+  (w, h) <- D.measureText f s
+  (a, _) <- D.fontMetrics f
+  let fg = D.parseColour fc
+      top = fromIntegral y - a
+  -- drawImageString filled the background behind the text; a bare drawString
+  -- did not.  Callers rely on the filling version, so the rectangle goes down
+  -- first -- and the background colour comes from the argument rather than the
+  -- GC, matching upstream, which sets both and then uses the image variant.
+  bgPixel <- gcBackground gc
+  let bg = if null bc then pixelToColour bgPixel else D.parseColour bc
+  drawOn d $ \_ -> do
+    D.fillRect bg (fromIntegral x) top w h
+    D.drawText f fg (fromIntegral x) top s

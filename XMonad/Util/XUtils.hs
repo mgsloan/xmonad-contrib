@@ -43,6 +43,14 @@ module XMonad.Util.XUtils
 
 import XMonad.Prelude
 import XMonad
+import XMonad.Util.River.Compat
+    ( Drawable, EventMask, GC, Pixel, commitDrawable, copyArea
+    , createDrawableWindow, createGC, createPixmap, destroyDrawable, drawOn
+    , fillRectangle, freeGC, freePixmap, mapDrawable, pixelFromString
+    , pixelToColour, setForeground, unmapDrawable )
+import qualified XMonad.Util.River.Draw as D
+import XMonad.River (warnUnimplemented)
+import XMonad.River.Wire (nullObject)
 import XMonad.Util.Font
 import XMonad.Util.Image
 import qualified XMonad.StackSet as W
@@ -57,42 +65,60 @@ import Data.Bits ((.&.))
 -- This function masks out any alpha channel in the passed pixels, and the
 -- result has no alpha channel. X11 mishandles @Pixel@ values with alpha
 -- channels and throws errors while producing black pixels.
+-- | Blend two colours.
+--
+-- Upstream round-trips through the server: queryColors to resolve both
+-- pixels, then allocColor to get one back.  A Pixel is the colour itself
+-- here, so this is arithmetic.
 averagePixels :: Pixel -> Pixel -> Double -> X Pixel
-averagePixels p1' p2' f =
-    do d <- asks display
-       let cm = defaultColormap d (defaultScreen d)
-           mask p = p .&. 0x00FFFFFF
-           p1 = mask p1'
-           p2 = mask p2'
-       [Color _ r1 g1 b1 _,Color _ r2 g2 b2 _] <- io $ queryColors d cm [Color p1 0 0 0 0,Color p2 0 0 0 0]
-       let mn x1 x2 = round (fromIntegral x1 * f + fromIntegral x2 * (1-f))
-       Color p _ _ _ _ <- io $ allocColor d cm (Color 0 (mn r1 r2) (mn g1 g2) (mn b1 b2) 0)
-       return p
+averagePixels p1 p2 f =
+    let (r1,g1,b1,a1) = pixelToColour p1
+        (r2,g2,b2,a2) = pixelToColour p2
+        mix x1 x2 = x1 * f + x2 * (1 - f)
+    in pure (pixelFromString (mix r1 r2, mix g1 g2, mix b1 b2, mix a1 a2))
 
 -- | Create a simple window given a rectangle. If Nothing is given
 -- only the exposureMask will be set, otherwise the Just value.
 -- Use 'showWindow' to map and hideWindow to unmap.
+-- | Create a window-manager surface for the given rectangle.
+--
+-- The event mask is accepted and ignored: river delivers exactly the events
+-- the management protocol defines and there is no mask to select, the same
+-- treatment @clientMask@ gets.  The override-redirect flag goes too --
+-- a surface with the shell-surface role is never laid out as a window, so
+-- there is nothing to redirect around.
+--
+-- The returned id is the shell surface's, which is why every @Window@-typed
+-- signature downstream keeps working.  It is not a river window, and
+-- 'XMonad.Util.River.Compat.isDrawable' is how anything that might send a
+-- window request tells the difference.
 createNewWindow :: Rectangle -> Maybe EventMask -> String -> Bool -> X Window
-createNewWindow (Rectangle x y w h) m col o = do
-  d   <- asks display
-  rw  <- asks theRoot
-  c   <- stringToPixel d col
-  win <- io $ mkWindow d (defaultScreenOfDisplay d) rw x y w h c o
-  case m of
-    Just em -> io $ selectInput d win em
-    Nothing -> io $ selectInput d win exposureMask
-  -- @@@ ugly hack to prevent compositing
-  whenX (return $ isJust m) $ flip catchX (return ()) $ do
-    wINDOW_TYPE <- getAtom "_NET_WM_WINDOW_TYPE"
-    dESKTOP <- getAtom "_NET_WM_WINDOW_TYPE_DESKTOP"
-    io $ changeProperty32 d win wINDOW_TYPE aTOM propModeReplace [fi dESKTOP]
-  return win
+createNewWindow r _ col _ = do
+  d  <- asks display
+  mc <- asks riverCompositor
+  mgr <- asks riverManager
+  case mc of
+    Nothing -> do
+      warnUnimplemented "createNewWindow"
+        "wl_compositor is unavailable, so window manager surfaces (prompts, decorations) cannot be created and this returns a null id."
+      pure nullObject
+    Just compositor -> do
+      win <- io (createDrawableWindow d compositor mgr r)
+      -- The background colour is painted rather than set as a window
+      -- attribute: there is no server-side background to set.
+      io $ drawOn win $ \_ -> D.fillRect (D.parseColour col) 0 0
+             (fromIntegral (rect_width r)) (fromIntegral (rect_height r))
+      pure win
 
 -- | Map a window
 showWindow :: Window -> X ()
 showWindow w = do
   d <- asks display
-  io $ mapWindow d w
+  shm <- asks riverShm
+  io (mapDrawable w)
+  -- Mapping alone shows nothing: a wl_surface with no buffer is not mapped,
+  -- so whatever has been queued has to be presented too.
+  mapM_ (\s -> io (commitDrawable d s w)) shm
 
 -- | the list version
 showWindows :: [Window] -> X ()
@@ -102,7 +128,7 @@ showWindows = mapM_ showWindow
 hideWindow :: Window -> X ()
 hideWindow w = do
   d <- asks display
-  io $ unmapWindow d w
+  io (unmapDrawable d w)
 
 -- | the list version
 hideWindows :: [Window] -> X ()
@@ -112,7 +138,7 @@ hideWindows = mapM_ hideWindow
 deleteWindow :: Window -> X ()
 deleteWindow w = do
   d <- asks display
-  io $ destroyWindow d w
+  io (destroyDrawable d w)
 
 -- | the list version
 deleteWindows :: [Window] -> X ()
@@ -252,7 +278,7 @@ showSimpleWindow WindowConfig{..} strs = do
 withSimpleWindow :: WindowConfig -> [String] -> X a -> X a
 withSimpleWindow wc strs doStuff = do
   w <- showSimpleWindow wc strs
-  doStuff <* withDisplay (io . (`destroyWindow` w))
+  doStuff <* deleteWindow w
 
 -- This stuff is not exported
 
@@ -264,44 +290,31 @@ paintWindow' :: Window -> Rectangle -> Dimension -> String -> String
                 -> Maybe (String, String, [((Position, Position), [[Bool]])]) -> X ()
 paintWindow' win (Rectangle _ _ wh ht) bw color b_color strStuff iconStuff = do
   d  <- asks display
-  p  <- io $ createPixmap d win wh ht (defaultDepthOfScreen $ defaultScreenOfDisplay d)
-  gc <- io $ createGC d p
-  -- draw
-  io $ setGraphicsExposures d gc False
-  [color',b_color'] <- mapM (stringToPixel d) [color,b_color]
-  -- we start with the border
-  io $ setForeground d gc b_color'
-  io $ fillRectangle d p gc 0 0 wh ht
-  -- and now again
-  io $ setForeground d gc color'
-  io $ fillRectangle d p gc (fi bw) (fi bw) (wh - (bw * 2)) (ht - (bw * 2))
-  -- paint strings
-  when (isJust strStuff) $ do
-    let (xmf,fc,bc,strAndPos) = fromJust strStuff
+  shm <- asks riverShm
+  -- Upstream composes into a pixmap and copies it over the window, so a
+  -- partial repaint is never shown.  The same shape works here and costs
+  -- nothing: a pixmap is a list of operations, and copying it is appending
+  -- that list, so there is no offscreen buffer and no blit.
+  p  <- io $ createPixmap wh ht
+  gc <- io createGC
+
+  [color', b_color'] <- mapM (stringToPixel d) [color, b_color]
+  -- The border first, then the interior over it, exactly as upstream: a
+  -- border is the part of the outer rectangle the inner one does not cover.
+  io $ setForeground gc b_color'
+  io $ fillRectangle p gc 0 0 wh ht
+  io $ setForeground gc color'
+  io $ fillRectangle p gc (fi bw) (fi bw) (wh - (bw * 2)) (ht - (bw * 2))
+
+  whenJust strStuff $ \(xmf, fc, bc, strAndPos) ->
     forM_ strAndPos $ \(s, (x, y)) ->
         printStringXMF d p xmf gc fc bc x y s
-  -- paint icons
-  when (isJust iconStuff) $ do
-    let (fc, bc, iconAndPos) = fromJust iconStuff
+
+  whenJust iconStuff $ \(fc, bc, iconAndPos) ->
     forM_ iconAndPos $ \((x, y), icon) ->
       drawIcon d p gc fc bc x y icon
-  -- copy the pixmap over the window
-  io $ copyArea      d p win gc 0 0 wh ht 0 0
-  -- free the pixmap and GC
-  io $ freePixmap    d p
-  io $ freeGC        d gc
 
--- | Creates a window with the possibility of setting some attributes.
--- Not exported.
-mkWindow :: Display -> Screen -> Window -> Position
-         -> Position -> Dimension -> Dimension -> Pixel -> Bool -> IO Window
-mkWindow d s rw x y w h p o = do
-  let visual = defaultVisualOfScreen s
-      attrmask = cWOverrideRedirect .|. cWBackPixel .|. cWBorderPixel
-  allocaSetWindowAttributes $
-         \attributes -> do
-           set_override_redirect attributes o
-           set_border_pixel      attributes p
-           set_background_pixel  attributes p
-           createWindow d rw x y w h 0 (defaultDepthOfScreen s)
-                        inputOutput visual attrmask attributes
+  io $ copyArea p win 0 0
+  io $ freePixmap p
+  io $ freeGC gc
+  mapM_ (\sh -> io (commitDrawable d sh win)) shm
