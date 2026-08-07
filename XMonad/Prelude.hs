@@ -25,7 +25,6 @@ module XMonad.Prelude (
     (!?),
     NonEmpty((:|)),
     notEmpty,
-    safeGetWindowAttributes,
     mkAbsolutePath,
     findM,
 
@@ -125,13 +124,6 @@ notEmpty :: HasCallStack => [a] -> NonEmpty a
 notEmpty [] = error "unexpected empty list"
 notEmpty (x:xs) = x :| xs
 
--- | A safe version of 'Graphics.X11.Xlib.Extras.getWindowAttributes'.
-safeGetWindowAttributes :: Window -> X (Maybe WindowAttributes)
-safeGetWindowAttributes w = withDisplay $ \dpy -> io . alloca $ \p ->
-  xGetWindowAttributes dpy w p >>= \case
-    0 -> pure Nothing
-    _ -> Just <$> peek p
-
 -- | (Naïvely) turn a relative path into an absolute one.
 --
 -- * If the path starts with @\/@, do nothing.
@@ -213,7 +205,7 @@ cleanKeyMask = cleanKeyMask' <$> gets numberlockMask
 
 cleanKeyMask' :: KeyMask -> KeyMask -> KeyMask
 cleanKeyMask' numLockMask mask =
-    mask .&. complement (numLockMask .|. lockMask) .&. (button1Mask - 1)
+    mask .&. complement (numLockMask .|. lockMask) .&. 255 {- river: no button bits in a modifier mask -}
 
 -- | A list of "regular" (extended ASCII) keys.
 regularKeys :: [(String, KeySym)]

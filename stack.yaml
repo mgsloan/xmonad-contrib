@@ -1,24 +1,12 @@
-# This stack.yaml is used to build xmonad-contrib with released versions
-# of X11 and xmonad
-
-resolver: lts-21.12
+# Build xmonad-contrib against the river backend, to measure how much of it
+# survives.  The xmonad checkout next door is built with -f river, so it
+# provides no Graphics.X11 and a deliberately reduced API.
+resolver: lts-24.53
 
 packages:
 - ./
+- ../xmonad-river
 
-extra-deps:
-- X11-1.10.2
-- xmonad-0.18.0
-
-nix:
-  packages:
-    - pkg-config
-    - xorg.libX11
-    - xorg.libXext
-    - xorg.libXft
-    - xorg.libXrandr
-    - xorg.libXrender
-    - xorg.libXScrnSaver
-
-ghc-options:
-  xmonad-contrib: '-j'
+flags:
+  xmonad:
+    river: true
