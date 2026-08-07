@@ -25,7 +25,7 @@ module XMonad.Layout.Reflect (
                              ) where
 
 import XMonad.Prelude (fi)
-import Graphics.X11 (Rectangle(..), Window)
+import XMonad.Core (Rectangle(..), Window)
 import Control.Arrow (second)
 
 import XMonad.Layout.LayoutModifier

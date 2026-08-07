@@ -179,7 +179,6 @@ arossatoConfig = do
           , ((modMask x .|. shiftMask                , xK_Down ), sendMessage (MoveDown       10))
           , ((modMask x .|. shiftMask                , xK_Up   ), sendMessage (MoveUp         10))
           -- gaps
-          , ((modMask x                              , xK_b    ), sendMessage  ToggleStruts      )
 
           ] ++
           -- Use modMask .|. shiftMask .|. controlMask 1-9 instead

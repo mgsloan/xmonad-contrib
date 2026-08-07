@@ -36,15 +36,13 @@ module XMonad.Actions.Minimize
   ) where
 
 import XMonad
-import XMonad.Prelude (fromMaybe, join, listToMaybe)
+import XMonad.Prelude (join, listToMaybe)
 import qualified XMonad.StackSet as W
 
 import qualified XMonad.Layout.BoringWindows as BW
 import qualified XMonad.Util.ExtensibleState as XS
 import XMonad.Util.Minimize
-import XMonad.Util.WindowProperties (getProp32)
 
-import Foreign.C.Types (CLong)
 import qualified Data.List as L
 import qualified Data.Map as M
 
@@ -65,20 +63,12 @@ import qualified Data.Map as M
 -- >        , ((modm,               xK_m     ), withFocused minimizeWindow      )
 -- >        , ((modm .|. shiftMask, xK_m     ), withLastMinimized maximizeWindow)
 
-setMinimizedState :: Window -> Int -> (CLong -> [CLong] -> [CLong]) -> X ()
-setMinimizedState win st f = do
-    setWMState win st
-    withDisplay $ \dpy -> do
-        wm_state <- getAtom "_NET_WM_STATE"
-        hidden <- fromIntegral <$> getAtom "_NET_WM_STATE_HIDDEN"
-        wstate <- fromMaybe [] <$> getProp32 wm_state win
-        io $ changeProperty32 dpy win wm_state aTOM propModeReplace (f hidden wstate)
-
-setMinimized :: Window -> X ()
-setMinimized win = setMinimizedState win iconicState (:)
-
-setNotMinimized :: Window -> X ()
-setNotMinimized win = setMinimizedState win normalState L.delete
+-- Under X11 this module also published the minimized state outward, as
+-- WM_STATE plus _NET_WM_STATE_HIDDEN, so that pagers and taskbars could see
+-- it.  There are no window properties here and nothing reading them, so that
+-- half is gone.  It was never where the state lived: 'Minimized' in xmonad's
+-- own extensible state is, and still is, which is why nothing else in this
+-- module changes.
 
 -- It does not just set minimizedStack to newWindows because it should save
 -- order in which elements were added (newer first)
@@ -98,7 +88,6 @@ modified f = XS.modified $
 minimizeWindow :: Window -> X ()
 minimizeWindow w = withWindowSet $ \ws ->
   whenX (modified $ M.insert w (M.lookup w $ W.floating ws)) $ do
-    setMinimized w
     windows $ W.sink w
     BW.focusDown
 
@@ -108,7 +97,6 @@ maximizeWindowAndChangeWSet :: (Window -> WindowSet -> WindowSet) -> Window -> X
 maximizeWindowAndChangeWSet f w = do
   mrect <- XS.gets (join . M.lookup w . rectMap)
   whenX (modified $ M.delete w) $ do
-    setNotMinimized w
     broadcastMessage BW.UpdateBoring
     windows $ f w . maybe id (W.float w) mrect
 

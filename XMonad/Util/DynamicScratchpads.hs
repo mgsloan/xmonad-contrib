@@ -20,7 +20,6 @@ module XMonad.Util.DynamicScratchpads {-# DEPRECATED "Use the dynamic scratchpad
   spawnDynamicSP
   ) where
 
-import Graphics.X11.Types
 import XMonad.Core
 import XMonad.Operations
 import qualified Data.Map as M

@@ -108,6 +108,7 @@ library
                         XMonad.Actions.FocusNth
                         XMonad.Actions.Launcher
                         XMonad.Actions.MessageFeedback
+                        XMonad.Actions.Minimize
                         XMonad.Actions.OnScreen
                         XMonad.Actions.PerLayoutKeys
                         XMonad.Actions.PerWindowKeys
@@ -143,13 +144,16 @@ library
                         XMonad.Hooks.FloatNext
                         XMonad.Hooks.Focus
                         XMonad.Hooks.InsertPosition
+                        XMonad.Hooks.ManageDocks
                         XMonad.Hooks.ManageHelpers
+                        XMonad.Hooks.Rescreen
                         XMonad.Hooks.Script
                         XMonad.Hooks.ToggleHook
                         XMonad.Hooks.WallpaperSetter
                         XMonad.Hooks.WorkspaceHistory
                         XMonad.Layout.Accordion
                         XMonad.Layout.AutoMaster
+                        XMonad.Layout.AvoidFloats
                         XMonad.Layout.BinaryColumn
                         XMonad.Layout.BoringWindows
                         XMonad.Layout.CenterMainFluid
@@ -162,8 +166,11 @@ library
                         XMonad.Layout.Cross
                         XMonad.Layout.Dishes
                         XMonad.Layout.DraggingVisualizer
+                        XMonad.Layout.Drawer
                         XMonad.Layout.Dwindle
+                        XMonad.Layout.FixedColumn
                         XMonad.Layout.FocusTracking
+                        XMonad.Layout.Gaps
                         XMonad.Layout.Grid
                         XMonad.Layout.GridVariants
                         XMonad.Layout.Groups
@@ -192,12 +199,14 @@ library
                         XMonad.Layout.PerScreen
                         XMonad.Layout.PerWorkspace
                         XMonad.Layout.PositionStoreFloat
+                        XMonad.Layout.Reflect
                         XMonad.Layout.Renamed
                         XMonad.Layout.ResizableThreeColumns
                         XMonad.Layout.ResizableTile
                         XMonad.Layout.Roledex
                         XMonad.Layout.ShowWName
                         XMonad.Layout.Simplest
+                        XMonad.Layout.SimplestFloat
                         XMonad.Layout.SortedLayout
                         XMonad.Layout.Spacing
                         XMonad.Layout.Spiral
@@ -232,6 +241,7 @@ library
                         XMonad.Util.ActionQueue
                         XMonad.Util.CustomKeys
                         XMonad.Util.Dmenu
+                        XMonad.Util.DynamicScratchpads
                         XMonad.Util.Dzen
                         XMonad.Util.EZConfig
                         XMonad.Util.ExtensibleConf

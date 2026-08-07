@@ -47,6 +47,7 @@ module XMonad.Hooks.ManageHelpers (
     currentWs,
     windowTag,
     isFullscreen,
+    isMinimized,
     isDialog,
     pid,
     transientTo,
@@ -75,7 +76,8 @@ import XMonad
 import XMonad.Prelude
 import qualified XMonad.StackSet as W
 import XMonad.River (RiverWindow (..))
-import qualified XMonad.River as River
+import XMonad.Util.Minimize (Minimized (..))
+import qualified XMonad.Util.ExtensibleState as XS
 
 import Data.IORef (readIORef)
 import qualified Data.Map.Strict as M
@@ -91,8 +93,11 @@ askRiverWindow = ask >>= \w -> liftX $ do
 --
 -- The queries here that were really \"read an X property off the window\" are
 -- gone, because Wayland has no window properties: @isInProperty@,
--- @isKDETrayWindow@, @isMinimized@, @isNotification@, @desktop@ and
--- @clientLeader@.
+-- @isKDETrayWindow@, @isNotification@, @desktop@ and @clientLeader@.
+--
+-- 'isMinimized' is the exception: minimizing is xmonad's own idea rather than
+-- X's, so it survives by asking "XMonad.Util.Minimize" instead of the
+-- property that module used to publish.
 --
 -- 'isNotification' deserves a word, because its absence is not a gap so much
 -- as a category error here: a notification under Wayland is a layer surface,
@@ -199,6 +204,18 @@ windowTag = ask >>= \w -> liftX $ withWindowSet $ return . W.findTag w
 -- window manager's decision, exactly as under X11.
 isFullscreen :: Query Bool
 isFullscreen = maybe False rwFullscreen <$> askRiverWindow
+
+-- | A predicate to check whether a window is hidden (minimized).
+-- See also "XMonad.Actions.Minimize".
+--
+-- Under X11 this read @_NET_WM_STATE_HIDDEN@, which
+-- "XMonad.Actions.Minimize" set alongside its own bookkeeping.  Here it
+-- consults that bookkeeping directly -- which is where the answer always
+-- actually lived, the property being a copy published for other clients to
+-- read.
+isMinimized :: Query Bool
+isMinimized = ask >>= \w -> liftX $
+    XS.gets (elem w . minimizedStack)
 
 -- | A predicate to check whether a window is a dialog.
 --

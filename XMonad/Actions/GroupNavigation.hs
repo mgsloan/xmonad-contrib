@@ -41,7 +41,6 @@ import qualified Data.Map as Map
 import Data.Sequence (Seq, ViewL (EmptyL, (:<)), viewl, (<|), (><), (|>))
 import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
-import Graphics.X11.Types
 import GHC.Generics
 import Prelude hiding (drop, elem, filter, null, reverse)
 import XMonad.Core

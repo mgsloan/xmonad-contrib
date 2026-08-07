@@ -38,7 +38,6 @@ module XMonad.Layout.Gaps (
 
 import XMonad.Prelude (delete, fi)
 import XMonad.Core
-import Graphics.X11 (Rectangle(..))
 
 import XMonad.Layout.LayoutModifier
 import XMonad.Util.Types (Direction2D(..))

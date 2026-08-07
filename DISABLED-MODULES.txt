@@ -5,6 +5,9 @@
 # list: once one of them starts compiling, others may follow with no work of
 # their own.
 #
+# Note that a module failing on an *import* has never had its body typechecked,
+# so fixing the import usually reveals more work rather than finishing it.
+#
 # Restoring one means putting its name back in xmonad-contrib.cabal and fixing
 # whatever it needs.  tests/survey.sh reports which is which.
 
@@ -22,7 +25,6 @@ XMonad.Actions.GridSelect
 XMonad.Actions.GroupNavigation
 XMonad.Actions.KeyRemap
 XMonad.Actions.LinkWorkspaces
-XMonad.Actions.Minimize
 XMonad.Actions.MostRecentlyUsed
 XMonad.Actions.MouseGestures
 XMonad.Actions.MouseResize
@@ -68,7 +70,6 @@ XMonad.Hooks.FadeInactive
 XMonad.Hooks.FadeWindows
 XMonad.Hooks.FloatConfigureReq
 XMonad.Hooks.ManageDebug
-XMonad.Hooks.ManageDocks
 XMonad.Hooks.Minimize
 XMonad.Hooks.Modal
 XMonad.Hooks.OnPropertyChange
@@ -76,7 +77,6 @@ XMonad.Hooks.Place
 XMonad.Hooks.PositionStoreHooks
 XMonad.Hooks.Qubes
 XMonad.Hooks.RefocusLast
-XMonad.Hooks.Rescreen
 XMonad.Hooks.ScreenCorners
 XMonad.Hooks.ServerMode
 XMonad.Hooks.SetWMName
@@ -89,7 +89,6 @@ XMonad.Hooks.UrgencyHook
 XMonad.Hooks.WindowSwallowing
 XMonad.Hooks.WorkspaceByPos
 XMonad.Hooks.XPropManage
-XMonad.Layout.AvoidFloats
 XMonad.Layout.BinarySpacePartition
 XMonad.Layout.BorderResize
 XMonad.Layout.ButtonDecoration
@@ -108,12 +107,9 @@ XMonad.Layout.DecorationEx.TextEngine
 XMonad.Layout.DecorationEx.Widgets
 XMonad.Layout.DecorationMadness
 XMonad.Layout.DragPane
-XMonad.Layout.Drawer
 XMonad.Layout.DwmStyle
 XMonad.Layout.FixedAspectRatio
-XMonad.Layout.FixedColumn
 XMonad.Layout.Fullscreen
-XMonad.Layout.Gaps
 XMonad.Layout.Groups.Examples
 XMonad.Layout.Groups.Wmii
 XMonad.Layout.ImageButtonDecoration
@@ -128,12 +124,10 @@ XMonad.Layout.MultiToggle.Instances
 XMonad.Layout.MultiToggle.TabBarDecoration
 XMonad.Layout.NoBorders
 XMonad.Layout.NoFrillsDecoration
-XMonad.Layout.Reflect
 XMonad.Layout.ResizeScreen
 XMonad.Layout.SideBorderDecoration
 XMonad.Layout.SimpleDecoration
 XMonad.Layout.SimpleFloat
-XMonad.Layout.SimplestFloat
 XMonad.Layout.Stoppable
 XMonad.Layout.SubLayouts
 XMonad.Layout.TabBarDecoration
@@ -152,7 +146,6 @@ XMonad.Prompt.Window
 XMonad.Util.ClickableWorkspaces
 XMonad.Util.Cursor
 XMonad.Util.DebugWindow
-XMonad.Util.DynamicScratchpads
 XMonad.Util.ExclusiveScratchpads
 XMonad.Util.Grab
 XMonad.Util.Hacks

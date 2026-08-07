@@ -28,8 +28,6 @@ module XMonad.Hooks.StatusBar (
   -- $usage
   StatusBarConfig(..),
   withSB,
-  withEasySB,
-  defToggleStrutsKey,
 
   -- * Available Configs
   -- $availableconfigs
@@ -90,10 +88,10 @@ import qualified XMonad.StackSet as W
 --
 -- The easiest way to use this module with xmobar, as well as any other
 -- status bar that supports property logging, is to use 'statusBarProp'
--- with 'withEasySB'; these take care of the necessary plumbing:
+-- with 'withSB'; it takes care of the necessary plumbing:
 --
 -- > mySB = statusBarProp "xmobar" (pure xmobarPP)
--- > main = xmonad $ withEasySB mySB defToggleStrutsKey def
+-- > main = xmonad $ withSB mySB def
 --
 -- You can read more about X11 properties
 -- [here](https://en.wikipedia.org/wiki/X_Window_System_core_protocol#Properties)
@@ -142,7 +140,7 @@ import qualified XMonad.StackSet as W
 -- discouraged: if anything goes wrong with the bar, xmonad will freeze!
 --
 -- Also note that 'statusBarPipe' returns 'IO StatusBarConfig', so
--- you need to evaluate it before passing it to 'withSB' or 'withEasySB':
+-- you need to evaluate it before passing it to 'withSB':
 --
 -- > main = do
 -- >   mySB <- statusBarPipe "xmobar" (pure myPP)
@@ -236,7 +234,7 @@ import qualified XMonad.StackSet as W
 -- | This datataype abstracts a status bar to provide a common interface
 -- functions like 'statusBarPipe' or 'statusBarProp'. Once defined, a status
 -- bar can be incorporated in 'XConfig' by using 'withSB' or
--- 'withEasySB', which take care of the necessary plumbing.
+-- which takes care of the necessary plumbing.
 data StatusBarConfig = StatusBarConfig  { sbLogHook     :: X ()
                                         -- ^ What and how to log to the status bar.
                                         , sbStartupHook :: X ()
@@ -277,35 +275,6 @@ withSB (StatusBarConfig lh sh ch) conf = conf
 -- Using this function multiple times to combine status bars may result in
 -- only one status bar working properly. See the section on using multiple
 -- status bars for more details.
-withEasySB :: LayoutClass l Window
-           => StatusBarConfig -- ^ The status bar config
-           -> (XConfig Layout -> (KeyMask, KeySym))
-                              -- ^ The key binding
-           -> XConfig l       -- ^ The base config
-           -> XConfig (ModifiedLayout AvoidStruts l)
-withEasySB sb k conf = docks . withSB sb $ conf
-    { layoutHook = avoidStruts (layoutHook conf)
-    , keys       = (<>) <$> keys' <*> keys conf
-    }
-  where
-    k' conf' = case k conf' of
-        (0, 0) ->
-            -- This usually means the user passed 'def' for the keybinding
-            -- function, and is otherwise meaningless to harmful depending on
-            -- whether 383ffb7 has been applied to xmonad or not. So do what
-            -- they probably intend.
-            --
-            -- A user who wants no keybinding function should probably use
-            -- 'withSB' instead, especially since NoSymbol didn't do anything
-            -- sane before 383ffb7. ++bsa
-            defToggleStrutsKey conf'
-        key -> key
-    keys' = (`M.singleton` sendMessage ToggleStruts) . k'
-
--- | Default @mod-b@ key binding for 'withEasySB'
-defToggleStrutsKey :: XConfig t -> (KeyMask, KeySym)
-defToggleStrutsKey XConfig{modMask = modm} = (modm, xK_b)
-
 -- | Creates a 'StatusBarConfig' that uses property logging to @_XMONAD_LOG@, which
 -- is set in 'xmonadDefProp'
 statusBarProp :: String -- ^ The command line to launch the status bar

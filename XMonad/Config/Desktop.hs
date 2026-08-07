@@ -175,7 +175,6 @@ desktopConfig = docks $ ewmh def
 
 desktopKeys :: XConfig l -> M.Map (KeyMask, KeySym) (X ())
 desktopKeys XConfig{modMask = modm} = M.fromList
-    [ ((modm, xK_b), sendMessage ToggleStruts) ]
 
 desktopLayoutModifiers :: LayoutClass l a => l a -> ModifiedLayout AvoidStruts l a
 desktopLayoutModifiers = avoidStruts

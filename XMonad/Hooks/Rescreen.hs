@@ -16,13 +16,13 @@ module XMonad.Hooks.Rescreen (
     addAfterRescreenHook,
     addRandrChangeHook,
     setRescreenWorkspacesHook,
-    setRescreenDelay,
     RescreenConfig(..),
     rescreenHook,
+
+    -- * Differences under river
+    -- $river
     ) where
 
-import Control.Concurrent (threadDelay)
-import Graphics.X11.Xrandr
 import XMonad
 import XMonad.Prelude
 import qualified XMonad.Util.ExtensibleConf as XC
@@ -63,7 +63,6 @@ data RescreenConfig = RescreenConfig
     { afterRescreenHook :: X () -- ^ hook to invoke after 'rescreen'
     , randrChangeHook :: X () -- ^ hook for other randr changes, e.g. (dis)connects
     , rescreenWorkspacesHook :: Last (X ()) -- ^ hook to invoke instead of 'rescreen'
-    , rescreenDelay :: Last Int -- ^ delay (in microseconds) to wait for events to settle
     }
 
 instance Default RescreenConfig where
@@ -71,12 +70,11 @@ instance Default RescreenConfig where
         { afterRescreenHook = mempty
         , randrChangeHook = mempty
         , rescreenWorkspacesHook = mempty
-        , rescreenDelay = mempty
         }
 
 instance Semigroup RescreenConfig where
-    RescreenConfig arh rch rwh rd <> RescreenConfig arh' rch' rwh' rd' =
-        RescreenConfig (arh <> arh') (rch <> rch') (rwh <> rwh') (rd <> rd')
+    RescreenConfig arh rch rwh <> RescreenConfig arh' rch' rwh' =
+        RescreenConfig (arh <> arh') (rch <> rch') (rwh <> rwh')
 
 instance Monoid RescreenConfig where
     mempty = def
@@ -133,64 +131,40 @@ addRandrChangeHook h = rescreenHook def{ randrChangeHook = h }
 setRescreenWorkspacesHook :: X () -> XConfig l -> XConfig l
 setRescreenWorkspacesHook h = rescreenHook def{ rescreenWorkspacesHook = pure h }
 
--- | Shortcut for 'rescreenHook'.
-setRescreenDelay :: Int -> XConfig l -> XConfig l
-setRescreenDelay d = rescreenHook def{ rescreenDelay = pure d }
-
--- | Startup hook to listen for @RRScreenChangeNotify@ events.
+-- | Startup hook.  Nothing to select: river reports output changes to every
+-- window manager, there being no event mask to ask for them with.
 rescreenStartupHook :: X ()
-rescreenStartupHook = do
-    dpy <- asks display
-    root <- asks theRoot
-    io $ xrrSelectInput dpy root rrScreenChangeNotifyMask
+rescreenStartupHook = mempty
 
--- | Event hook with custom rescreen/randr hooks. See 'rescreenHook' for more.
+-- | Event hook with custom rescreen\/randr hooks. See 'rescreenHook' for more.
 rescreenEventHook :: Event -> X All
-rescreenEventHook e = do
-    shouldHandle <- case e of
-        ConfigureEvent{ ev_window = w } -> isRoot w
-        RRScreenChangeNotifyEvent{ ev_window = w } -> isRoot w
-        _ -> pure False
-    if shouldHandle
-        then All False <$ handleEvent e
-        else mempty
-
-handleEvent :: Event -> X ()
-handleEvent e = XC.with $ \RescreenConfig{..} -> do
-    -- Xorg emits several events after every change, clear them to prevent
-    -- triggering the hook multiple times.
-    whenJust (getLast rescreenDelay) (io . threadDelay)
-    moreConfigureEvents <- clearTypedWindowEvents (ev_window e) configureNotify
-    _ <- clearTypedWindowRREvents (ev_window e) rrScreenChangeNotify
-    -- If there were any ConfigureEvents, this is an actual screen
-    -- configuration change, so rescreen and fire rescreenHook. Otherwise,
-    -- this is just a connect/disconnect, fire randrChangeHook.
-    if ev_event_type e == configureNotify || moreConfigureEvents
-        then fromMaybe rescreen (getLast rescreenWorkspacesHook) >> afterRescreenHook
-        else randrChangeHook
-
--- | Remove all X events of a given window and type from the event queue,
--- return whether there were any.
-clearTypedWindowEvents :: Window -> EventType -> X Bool
-clearTypedWindowEvents w t = withDisplay $ \d -> io $ allocaXEvent (go d)
+rescreenEventHook = \case
+    ScreenLayoutChanged -> All False <$ XC.with layoutChanged
+    OutputAdded _       -> All False <$ XC.with randrChangeHook
+    OutputRemoved _     -> All False <$ XC.with randrChangeHook
+    _                   -> mempty
   where
-    go d e' = do
-        sync d False
-        gotEvent <- checkTypedWindowEvent d w t e'
-        e <- if gotEvent then Just <$> getEvent e' else pure Nothing
-        gotEvent <$ if
-            | not gotEvent -> mempty
-            | (ev_window <$> e) == Just w -> void $ go d e'
-            -- checkTypedWindowEvent checks ev_event instead of ev_window, so
-            -- we may need to put some events back
-            | otherwise -> allocaXEvent (go d) >> io (putBackEvent d e')
+    layoutChanged RescreenConfig{..} =
+        fromMaybe rescreen (getLast rescreenWorkspacesHook) >> afterRescreenHook
 
-clearTypedWindowRREvents :: Window -> EventType -> X Bool
-clearTypedWindowRREvents w t =
-    rrEventBase >>= \case
-        Just base -> clearTypedWindowEvents w (base + t)
-        Nothing -> pure False
-
-rrEventBase :: X (Maybe EventType)
-rrEventBase = withDisplay $ \d ->
-    fmap (fromIntegral . fst) <$> io (xrrQueryExtension d)
+-- $river
+--
+-- The hooks are the same; what triggers them is not, and it is simpler.
+--
+-- X11 gave a window manager two overlapping signals -- @ConfigureNotify@ on
+-- the root window and @RRScreenChangeNotify@ -- emitted in bursts, and left it
+-- to work out which meant "the screen layout changed" and which meant "a
+-- monitor was plugged in".  That is what this module was for.  river reports
+-- outputs directly, so the two questions have two separate answers:
+--
+-- * 'afterRescreenHook' and 'rescreenWorkspacesHook' run on
+--   'ScreenLayoutChanged', which the window manager sends only when the screen
+--   rectangles genuinely differ from what the 'WindowSet' already had.
+--
+-- * 'randrChangeHook' runs on @OutputAdded@ and @OutputRemoved@ -- an output
+--   appearing or going away, whether or not the layout changed as a result.
+--
+-- @setRescreenDelay@ and the @rescreenDelay@ field are gone.  They existed to
+-- wait out Xorg\'s duplicate events; there is no burst to wait out, and the
+-- delay was a @threadDelay@ on the thread that owns the compositor connection,
+-- which here would stall the whole window manager.
