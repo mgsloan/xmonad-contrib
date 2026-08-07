@@ -95,8 +95,11 @@ library
                         XMonad.Actions.BluetileCommands
                         XMonad.Actions.Commands
                         XMonad.Actions.CopyWindow
+                        XMonad.Actions.CycleRecentWS
                         XMonad.Actions.CycleSelectedLayouts
                         XMonad.Actions.CycleWS
+                        XMonad.Actions.CycleWindows
+                        XMonad.Actions.CycleWorkspaceByScreen
                         XMonad.Actions.DeManage
                         XMonad.Actions.DwmPromote
                         XMonad.Actions.DynamicProjects
@@ -118,6 +121,7 @@ library
                         XMonad.Actions.Promote
                         XMonad.Actions.RandomBackground
                         XMonad.Actions.RepeatAction
+                        XMonad.Actions.Repeatable
                         XMonad.Actions.RotSlaves
                         XMonad.Actions.RotateSome
                         XMonad.Actions.Search
@@ -151,6 +155,7 @@ library
                         XMonad.Hooks.ManageHelpers
                         XMonad.Hooks.Rescreen
                         XMonad.Hooks.Script
+                        XMonad.Hooks.SetWMName
                         XMonad.Hooks.StatusBar.PP
                         XMonad.Hooks.ToggleHook
                         XMonad.Hooks.UrgencyHook
@@ -260,6 +265,7 @@ library
                         XMonad.Util.ActionCycle
                         XMonad.Util.ActionQueue
                         XMonad.Util.ClickableWorkspaces
+                        XMonad.Util.Cursor
                         XMonad.Util.CustomKeys
                         XMonad.Util.Dmenu
                         XMonad.Util.DynamicScratchpads

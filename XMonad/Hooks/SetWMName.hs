@@ -42,75 +42,47 @@ module XMonad.Hooks.SetWMName (
     )
   where
 
-import Foreign.C.Types (CChar)
-import Foreign.Marshal.Alloc (alloca)
-
 import XMonad
-import XMonad.Prelude (fromJust, join, listToMaybe, maybeToList, nub, ord)
 
--- | sets WM name
+-- $river
+--
+-- __Both of these do nothing under river, and cannot do anything.__
+--
+-- This module exists to work around a bug in Java's AWT.  A non-reparenting
+-- window manager made AWT guess window insets, and it guessed absurdly; naming
+-- the window manager @LG3D@ made AWT take a path where the insets are
+-- hard-coded to zero.  The naming was done by putting
+-- @_NET_SUPPORTING_WM_CHECK@ and @_NET_WM_NAME@ on the root window, and on a
+-- 1x1 override-redirect window created for the purpose.
+--
+-- None of that has a counterpart here.  There is no root window, no window
+-- properties, no @_NET_@ anything -- EWMH is an X11 protocol built on root
+-- window properties, and river has neither.  Nor is there anyone to read it:
+-- a Java program on a Wayland session either speaks Wayland, in which case it
+-- never asks, or runs under XWayland, whose root window belongs to XWayland's
+-- own window manager and not to this process.
+--
+-- They are kept, rather than removed, because the alternative helps nobody.
+-- Removing them would break every config that carries @setWMName \"LG3D\"@ in
+-- its startup hook -- which is most configs that ever needed it, since the
+-- line is harmless to leave in -- and the breakage would be at a call site
+-- whose author would then have to discover all of the above.  The deprecation
+-- says it at the call site instead, at compile time, and the config keeps
+-- building.
+
+-- | Set the window manager name.  A no-op; see the module description.
 setWMName :: String -> X ()
-setWMName name = do
-    atom_NET_SUPPORTING_WM_CHECK <- netSupportingWMCheckAtom
-    atom_NET_WM_NAME <- getAtom "_NET_WM_NAME"
-    atom_NET_SUPPORTED_ATOM <- getAtom "_NET_SUPPORTED"
-    atom_UTF8_STRING <- getAtom "UTF8_STRING"
+setWMName _ = pure ()
+{-# DEPRECATED setWMName
+      "Does nothing under river: there is no root window to name, and no \
+      \Java AWT reading it. Safe to delete." #-}
 
-    root <- asks theRoot
-    supportWindow <- getSupportWindow
-    dpy <- asks display
-    io $ do
-        -- _NET_SUPPORTING_WM_CHECK atom of root and support windows refers to the support window
-        mapM_ (\w -> changeProperty32 dpy w atom_NET_SUPPORTING_WM_CHECK wINDOW propModeReplace [fromIntegral supportWindow]) [root, supportWindow]
-        -- set WM_NAME in supportWindow (now only accepts latin1 names to eliminate dependency on utf8 encoder)
-        changeProperty8 dpy supportWindow atom_NET_WM_NAME atom_UTF8_STRING propModeReplace (latin1StringToCCharList name)
-        -- declare which _NET protocols are supported (append to the list if it exists)
-        supportedList <- join . maybeToList <$> getWindowProperty32 dpy atom_NET_SUPPORTED_ATOM root
-        changeProperty32 dpy root atom_NET_SUPPORTED_ATOM aTOM propModeReplace (nub $ fromIntegral atom_NET_SUPPORTING_WM_CHECK : fromIntegral atom_NET_WM_NAME : supportedList)
-  where
-    latin1StringToCCharList :: String -> [CChar]
-    latin1StringToCCharList = map (fromIntegral . ord)
-
-netSupportingWMCheckAtom :: X Atom
-netSupportingWMCheckAtom = getAtom "_NET_SUPPORTING_WM_CHECK"
-
-getSupportWindow :: X Window
-getSupportWindow = withDisplay $ \dpy -> do
-    atom_NET_SUPPORTING_WM_CHECK <- netSupportingWMCheckAtom
-    root <- asks theRoot
-    supportWindow <- (listToMaybe =<<) <$> io (getWindowProperty32 dpy atom_NET_SUPPORTING_WM_CHECK root)
-    validateWindow (fmap fromIntegral supportWindow)
-  where
-    validateWindow :: Maybe Window -> X Window
-    validateWindow w = do
-        valid <- maybe (return False) isValidWindow w
-        if valid then
-            return $ fromJust w
-          else
-            createSupportWindow
-
-    -- is there a better way to check the validity of the window?
-    isValidWindow :: Window -> X Bool
-    isValidWindow w = withDisplay $ \dpy -> io $ alloca $ \p -> do
-        status <- xGetWindowAttributes dpy w p
-        return (status /= 0)
-
-    -- this code was translated from C (see OpenBox WM, screen.c)
-    createSupportWindow :: X Window
-    createSupportWindow = withDisplay $ \dpy -> do
-        root <- asks theRoot
-        let visual = defaultVisual dpy (defaultScreen dpy)  -- should be CopyFromParent (=0), but the constructor is hidden in X11.XLib
-        window <- io $ allocaSetWindowAttributes $ \winAttrs -> do
-            set_override_redirect winAttrs True         -- WM cannot decorate/move/close this window
-            set_event_mask winAttrs propertyChangeMask  -- not sure if this is needed
-            let bogusX = -100
-                bogusY = -100
-              in
-                createWindow dpy root bogusX bogusY 1 1 0 0 inputOutput visual (cWEventMask .|. cWOverrideRedirect) winAttrs
-        io $ mapWindow dpy window   -- not sure if this is needed
-        io $ lowerWindow dpy window -- not sure if this is needed
-        return window
-
--- | Get WM name.
+-- | Get the window manager name.
+--
+-- Always @\"\"@.  There is nothing storing a name to return, and inventing one
+-- so that @setWMName x >> getWMName@ appears to round-trip would be a lie
+-- about state that does not exist.
 getWMName :: X String
-getWMName = getSupportWindow >>= runQuery title
+getWMName = pure ""
+{-# DEPRECATED getWMName
+      "Does nothing under river and always returns \"\". See setWMName." #-}
