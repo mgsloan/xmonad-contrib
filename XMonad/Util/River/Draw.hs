@@ -40,7 +40,7 @@ module XMonad.Util.River.Draw
     , parseColour
     ) where
 
-import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.IO.Class (MonadIO)
 import Data.Char (isDigit, isSpace)
 import Foreign.Ptr (castPtr)
 import Graphics.Rendering.Cairo
@@ -157,7 +157,9 @@ parseColour ('#':rest) = case rest of
   [r,g,b]                   -> rgba (hex1 r) (hex1 g) (hex1 b) 255
   _                         -> (0, 0, 0, 1)
   where
+    rgba :: Int -> Int -> Int -> Int -> Colour
     rgba r g b a = (f r, f g, f b, f a)
+    f :: Int -> Double
     f v = fromIntegral v / 255
     hex1 c = let v = hexDigit c in v * 16 + v
     hex2 a b = hexDigit a * 16 + hexDigit b

@@ -91,7 +91,8 @@ library
         cpp-options: -DXFT
 
     build-depends:      cairo, pango
-    exposed-modules:    XMonad.Util.River.Draw
+    exposed-modules:    XMonad.Util.River.Compat
+                        XMonad.Util.River.Draw
                         XMonad.Actions.AfterDrag
                         XMonad.Actions.BluetileCommands
                         XMonad.Actions.Commands
