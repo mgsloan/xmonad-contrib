@@ -91,11 +91,10 @@ library
         cpp-options: -DXFT
 
     build-depends:      cairo, pango
-    exposed-modules:    XMonad.Util.River.Compat
-                        XMonad.Util.River.Draw
-                        XMonad.Actions.AfterDrag
+    exposed-modules:    XMonad.Actions.AfterDrag
                         XMonad.Actions.BluetileCommands
                         XMonad.Actions.Commands
+                        XMonad.Actions.CopyWindow
                         XMonad.Actions.CycleSelectedLayouts
                         XMonad.Actions.CycleWS
                         XMonad.Actions.DeManage
@@ -109,6 +108,7 @@ library
                         XMonad.Actions.Launcher
                         XMonad.Actions.MessageFeedback
                         XMonad.Actions.Minimize
+                        XMonad.Actions.NoBorders
                         XMonad.Actions.OnScreen
                         XMonad.Actions.PerLayoutKeys
                         XMonad.Actions.PerWindowKeys
@@ -130,6 +130,7 @@ library
                         XMonad.Actions.SwapWorkspaces
                         XMonad.Actions.TagWindows
                         XMonad.Actions.Warp
+                        XMonad.Actions.WindowBringer
                         XMonad.Actions.WindowGo
                         XMonad.Actions.WithAll
                         XMonad.Actions.Workscreen
@@ -140,7 +141,9 @@ library
                         XMonad.Doc.Configuring
                         XMonad.Doc.Developing
                         XMonad.Doc.Extending
+                        XMonad.Hooks.BorderPerWindow
                         XMonad.Hooks.DynamicHooks
+                        XMonad.Hooks.DynamicIcons
                         XMonad.Hooks.FloatNext
                         XMonad.Hooks.Focus
                         XMonad.Hooks.InsertPosition
@@ -148,8 +151,9 @@ library
                         XMonad.Hooks.ManageHelpers
                         XMonad.Hooks.Rescreen
                         XMonad.Hooks.Script
-                        XMonad.Hooks.UrgencyHook
+                        XMonad.Hooks.StatusBar.PP
                         XMonad.Hooks.ToggleHook
+                        XMonad.Hooks.UrgencyHook
                         XMonad.Hooks.WallpaperSetter
                         XMonad.Hooks.WorkspaceHistory
                         XMonad.Layout.Accordion
@@ -165,10 +169,13 @@ library
                         XMonad.Layout.Column
                         XMonad.Layout.Columns
                         XMonad.Layout.Cross
+                        XMonad.Layout.Decoration
+                        XMonad.Layout.DecorationEx.Geometry
                         XMonad.Layout.Dishes
                         XMonad.Layout.DraggingVisualizer
                         XMonad.Layout.Drawer
                         XMonad.Layout.Dwindle
+                        XMonad.Layout.DwmStyle
                         XMonad.Layout.FixedColumn
                         XMonad.Layout.FocusTracking
                         XMonad.Layout.Gaps
@@ -194,7 +201,11 @@ library
                         XMonad.Layout.MultiColumns
                         XMonad.Layout.MultiDishes
                         XMonad.Layout.MultiToggle
+                        XMonad.Layout.MultiToggle.Instances
+                        XMonad.Layout.MultiToggle.TabBarDecoration
                         XMonad.Layout.Named
+                        XMonad.Layout.NoBorders
+                        XMonad.Layout.NoFrillsDecoration
                         XMonad.Layout.OnHost
                         XMonad.Layout.OneBig
                         XMonad.Layout.PerScreen
@@ -204,8 +215,11 @@ library
                         XMonad.Layout.Renamed
                         XMonad.Layout.ResizableThreeColumns
                         XMonad.Layout.ResizableTile
+                        XMonad.Layout.ResizeScreen
                         XMonad.Layout.Roledex
                         XMonad.Layout.ShowWName
+                        XMonad.Layout.SideBorderDecoration
+                        XMonad.Layout.SimpleDecoration
                         XMonad.Layout.Simplest
                         XMonad.Layout.SimplestFloat
                         XMonad.Layout.SortedLayout
@@ -214,10 +228,13 @@ library
                         XMonad.Layout.Square
                         XMonad.Layout.StackTile
                         XMonad.Layout.StateFull
+                        XMonad.Layout.TabBarDecoration
+                        XMonad.Layout.TallMastersCombo
                         XMonad.Layout.ThreeColumns
                         XMonad.Layout.ToggleLayouts
                         XMonad.Layout.TwoPane
                         XMonad.Layout.TwoPanePersistent
+                        XMonad.Layout.VoidBorders
                         XMonad.Layout.WindowArranger
                         XMonad.Layout.WorkspaceDir
                         XMonad.Layout.ZoomRow
@@ -234,12 +251,15 @@ library
                         XMonad.Prompt.Pass
                         XMonad.Prompt.Shell
                         XMonad.Prompt.Ssh
+                        XMonad.Prompt.Theme
                         XMonad.Prompt.Unicode
+                        XMonad.Prompt.Window
                         XMonad.Prompt.Workspace
                         XMonad.Prompt.XMonad
                         XMonad.Prompt.Zsh
                         XMonad.Util.ActionCycle
                         XMonad.Util.ActionQueue
+                        XMonad.Util.ClickableWorkspaces
                         XMonad.Util.CustomKeys
                         XMonad.Util.Dmenu
                         XMonad.Util.DynamicScratchpads
@@ -251,6 +271,7 @@ library
                         XMonad.Util.History
                         XMonad.Util.Image
                         XMonad.Util.Invisible
+                        XMonad.Util.Loggers
                         XMonad.Util.Minimize
                         XMonad.Util.NamedActions
                         XMonad.Util.NamedWindows
@@ -259,12 +280,15 @@ library
                         XMonad.Util.Process
                         XMonad.Util.PureX
                         XMonad.Util.Rectangle
+                        XMonad.Util.River.Compat
+                        XMonad.Util.River.Draw
                         XMonad.Util.Run
                         XMonad.Util.SessionStart
                         XMonad.Util.SpawnNamedPipe
                         XMonad.Util.SpawnOnce
                         XMonad.Util.Stack
                         XMonad.Util.StickyWindows
+                        XMonad.Util.Themes
                         XMonad.Util.Timer
                         XMonad.Util.TreeZipper
                         XMonad.Util.Types

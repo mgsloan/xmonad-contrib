@@ -652,9 +652,20 @@ mkXPromptImplementationWith historyKey conf om finish = do
   let st = (initState d nullObject frame s om gc fs hs conf id width)
              { keyChan = chan, clientH = h }
 
+  -- 'finally', not a plain sequence.  runXP runs the prompt's whole
+  -- interactive life -- key handling, completion functions, the XPrompt
+  -- instance -- all of which is config code, none of which is total.  If any
+  -- of it throws, this thread dies; and until chClose runs, the client thread
+  -- is still holding an exclusive keyboard grab on behalf of a prompt that no
+  -- longer exists.  Every keystroke then goes to a surface nobody is reading,
+  -- which is a session with no usable keyboard.  That is the failure this
+  -- guards, and it is not hypothetical.
+  --
+  -- The keyboard is released first and the rest -- history, the selected
+  -- action -- happens after, so a failure while saving history cannot take the
+  -- keyboard with it either.
   io . void . forkIO $ do
-    st' <- runXP st
-    chClose h
+    st' <- runXP st `E.finally` (chClose h >> closeComplClients)
     -- Back on the window manager's thread: history and the action both want
     -- the X monad, and this thread must not have one.
     postAction xconf $ do
@@ -1623,6 +1634,20 @@ getCompletions = do
   getCompletionFunction st = case operationMode st of
     XPSingleMode compl _ -> compl
     XPMultipleModes modes -> completionFunction $ W.focus modes
+
+-- | Close every completion surface, whoever created it.
+--
+-- The teardown path, paired with 'chClose' on the prompt itself.
+-- 'destroyComplWin' is the orderly version and runs from inside the prompt; if
+-- the prompt has stopped running there is nothing left to reach its state, and
+-- a completion list would sit on screen with no way to dismiss it.  These
+-- carry no keyboard grab, so this is a cosmetic rescue rather than the
+-- keyboard one -- but a leftover surface is indistinguishable, to the person
+-- looking at it, from the prompt still being open.
+closeComplClients :: IO ()
+closeComplClients = do
+  cs <- atomicModifyIORef' complClients (\cs -> ([], cs))
+  mapM_ (chClose . snd) cs
 
 -- | Destroy the currently drawn completion window, if there is one.
 destroyComplWin :: XP ()
