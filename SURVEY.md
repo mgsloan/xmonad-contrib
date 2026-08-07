@@ -15,7 +15,19 @@ The skipped ones are **unmeasured, not known-bad**: GHC never attempted them,
 because a module they import failed first. The true number that would compile
 is somewhere between 215 and 272.
 
-Regenerate with `tests/survey.sh` after rebuilding `xmonad`.
+To bring this up to date after changing the backend or a module:
+
+```
+stack build --flag xmonad:river   # in ../xmonad-river, if it changed
+tests/survey.sh                   # rewrites this file; ~10 min, builds all 334
+python3 tests/expose-working.py   # enable/disable modules in the cabal to match
+stack build xmonad-contrib:lib    # confirm the library still builds
+```
+
+The second step is not optional bookkeeping: the cabal file cannot name a
+module it fails to build, so a module that starts compiling is not usable by a
+config until it is enabled there. Disabled modules are commented out in place
+rather than deleted, so the list below and the cabal file say the same thing.
 
 ## Failing modules, by cause
 
