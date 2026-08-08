@@ -62,7 +62,7 @@ o.append("is somewhere between %d and %d.\n" % (len(attempted)-len(failed), len(
 o.append("""To bring this up to date after changing the backend or a module:
 
 ```
-stack build --flag xmonad:river   # in ../xmonad-river, if it changed
+stack build                       # in ../xmonad-river, if it changed
 tests/survey.sh                   # rewrites this file; ~10 min, builds all 334
 python3 tests/expose-working.py   # enable/disable modules in the cabal to match
 stack build xmonad-contrib:lib    # confirm the library still builds

@@ -1,12 +1,10 @@
 # Build xmonad-contrib against the river backend, to measure how much of it
-# survives.  The xmonad checkout next door is built with -f river, so it
-# provides no Graphics.X11 and a deliberately reduced API.
+# survives.  The xmonad checkout next door is the river fork: it provides no
+# Graphics.X11 and a deliberately reduced API.  No flag selects that any more,
+# because there is nothing else it could build.
 resolver: lts-24.53
 
 packages:
 - ./
 - ../xmonad-river
 
-flags:
-  xmonad:
-    river: true
