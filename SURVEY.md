@@ -31,25 +31,26 @@ rather than deleted, so the list below and the cabal file say the same thing.
 
 ## Failing modules, by cause
 
-### other — 7 modules
+### other — 10 modules
 
 - `XMonad.Actions.MouseResize` (2) — Not in scope: data constructor ‘ButtonEvent’
-- `XMonad.Hooks.DebugKeyEvents` (2) — ?
+- `XMonad.Hooks.EwmhDesktops` (1) — ?
 - `XMonad.Hooks.FadeInactive` (4) — Variable not in scope: getAtom :: String -> X t2
-- `XMonad.Hooks.FloatConfigureReq` (1) — Not in scope: data constructor ‘ConfigureRequestEvent’
+- `XMonad.Hooks.FloatConfigureReq` (1) — ?
 - `XMonad.Hooks.Qubes` (5) — Variable not in scope: focusIn :: EventType
+- `XMonad.Hooks.ScreenCorners` (1) — ?
 - `XMonad.Layout.BorderResize` (4) — Not in scope: type constructor or class ‘Glyph’
+- `XMonad.Layout.MouseResizableTile` (1) — ?
 - `XMonad.Util.RemoteWindows` (7) — Variable not in scope: getAtom :: String -> X t2
+- `XMonad.Util.Ungrab` (1) — ?
 
-### missing module or export — 7 modules
+### missing module or export — 5 modules
 
 - `XMonad.Config.Monad` (2) — Could not find module ‘Data.Accessor’.
+- `XMonad.Hooks.DebugKeyEvents` (2) — Could not load module ‘Graphics.X11.Xlib’.
 - `XMonad.Hooks.DynamicBars` (4) — Could not load module ‘Graphics.X11.Xinerama’.
-- `XMonad.Hooks.EwmhDesktops` (1) — Module ‘XMonad.Util.WindowProperties’ does not export ‘getProp32’.
-- `XMonad.Layout.MouseResizableTile` (1) — Could not load module ‘Graphics.X11’.
 - `XMonad.Util.NoTaskbar` (3) — Could not load module ‘Graphics.X11.Xlib’.
 - `XMonad.Util.Paste` (3) — Module ‘XMonad’ does not export ‘theRoot’.
-- `XMonad.Util.Ungrab` (1) — Module ‘XMonad.Operations’ does not export ‘unGrab’.
 
 ### X window properties — 4 modules
 
@@ -58,11 +59,10 @@ rather than deleted, so the list below and the cabal file say the same thing.
 - `XMonad.Util.DebugWindow` (11) — Not in scope: type constructor or class ‘Atom’
 - `XMonad.Util.StringProp` (1) — Not in scope: type constructor or class ‘Atom’
 
-### raw X events — 4 modules
+### raw X events — 3 modules
 
 - `XMonad.Actions.UpdateFocus` (3) — Not in scope: data constructor ‘MotionEvent’
 - `XMonad.Hooks.Minimize` (3) — Not in scope: data constructor ‘ClientMessageEvent’
-- `XMonad.Hooks.ScreenCorners` (1) — Not in scope: data constructor ‘CrossingEvent’
 - `XMonad.Hooks.ServerMode` (3) — Not in scope: data constructor ‘ClientMessageEvent’
 
 ### Xlib drawing and display — 2 modules

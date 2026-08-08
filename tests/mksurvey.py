@@ -13,8 +13,8 @@ for l in log.split('\n'):
     if cur and cur[1]=='error' and blocks.get(cur[0]): blocks[cur[0]][-1].append(l)
 first={}
 for p,errs in blocks.items():
-    if '/xmonad-contrib-river/' not in p: continue
-    mod=p.split('/xmonad-contrib-river/')[1][:-3].replace('/','.')
+    if '/xmonad-river-contrib/' not in p: continue
+    mod=p.split('/xmonad-river-contrib/')[1][:-3].replace('/','.')
     fl=[x.strip() for x in errs[0] if x.strip()][:1]
     first[mod]=(len(errs), re.sub(r'\s+',' ',fl[0]) if fl else '?')
 failed=set(first)

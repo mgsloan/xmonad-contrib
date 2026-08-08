@@ -31,9 +31,9 @@ attempted = set(re.findall(r'\[\s*\d+ of \d+\] Compiling (\S+)', log))
 # and neither does an error in a module that merely imports it: -fkeep-going
 # reports each failure against its own file.
 broken = {
-    path.split('/xmonad-contrib-river/')[1][:-3].replace('/', '.')
+    path.split('/xmonad-river-contrib/')[1][:-3].replace('/', '.')
     for path in re.findall(r'^(/\S+?\.hs):\d+:\d+: error', log, re.M)
-    if '/xmonad-contrib-river/' in path
+    if '/xmonad-river-contrib/' in path
 }
 working = {m for m in attempted if m.startswith('XMonad.') and m not in broken}
 
