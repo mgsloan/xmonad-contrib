@@ -54,6 +54,10 @@ import XMonad
 import qualified XMonad.StackSet as W
 import XMonad.Hooks.UrgencyHook
 import qualified XMonad.Layout.Decoration as D
+-- Pixmap and GC came from Graphics.X11 on the X11 build.  Here they are the
+-- deferred-drawing versions in "XMonad.Util.River.Compat", which is what the
+-- rest of the decoration machinery already draws through.
+import XMonad.Util.River.Compat (GC, Pixmap)
 
 -- | Information about decoration of one window
 data WindowDecoration = WindowDecoration {
@@ -231,11 +235,13 @@ genericWindowStyle win theme = do
 windowStyleType :: Window -> X ThemeStyleType
 windowStyleType win = do
   mbFocused <- W.peek <$> gets windowset
+  -- The X11 version asked twice: xmonad's own urgency set, and the window's
+  -- WM_HINTS urgency bit, which a client could raise for itself.  Wayland has
+  -- no WM_HINTS, and its nearest equivalent -- xdg-activation-v1 -- river does
+  -- not yet forward to the window manager, so 'readUrgents' is the whole
+  -- answer here.  See future-work.md, "UrgencyHook has no input path".
   isWmStateUrgent <- (win `elem`) <$> readUrgents
-  isUrgencyBitSet <- withDisplay $ \dpy -> do
-                       hints <- io $ getWMHints dpy win
-                       return $ wmh_flags hints `testBit` urgencyHintBit
-  if isWmStateUrgent || isUrgencyBitSet
+  if isWmStateUrgent
     then return UrgentWindow
     else return $
       case mbFocused of

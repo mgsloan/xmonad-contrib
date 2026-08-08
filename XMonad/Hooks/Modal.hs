@@ -173,8 +173,12 @@ currentKeys = do
     Nothing -> join keys <$> asks config
 
 -- | Grab the keys corresponding to the active 'Mode' (or lack thereof).
+--
+-- The whole keymap, not just its keys: river delivers a key by running the
+-- binding's action, so there is no second step in which a hook looks the
+-- action up.  See 'XMonad.Util.Grab.grab'.
 regrab :: X ()
-regrab = grab . M.keys =<< currentKeys
+regrab = grab =<< currentKeys
 
 -- | Called after changing the mode. Grabs the correct keys and runs the
 -- 'logHook'.
@@ -182,15 +186,15 @@ refreshMode :: X ()
 refreshMode = regrab >> asks config >>= logHook
 
 -- | Event hook to control the keybindings.
+-- Upstream needs an event hook here for two things, and river needs it for
+-- neither: re-grabbing when the keymap changes -- which river's keysym
+-- bindings make unnecessary, see "XMonad.Util.Grab" -- and dispatching each
+-- captured key, which 'regrab' has already arranged by handing the actions to
+-- the binding.  Kept as a no-op rather than removed because a config that
+-- lists it in its 'handleEventHook' should keep working, and what it asked
+-- for does happen.
 modalEventHook :: Event -> X All
-modalEventHook = customRegrabEvHook regrab <> \case
-  KeyEvent { ev_event_type = t, ev_state = m, ev_keycode = code }
-    | t == keyPress -> withDisplay $ \dpy -> do
-      kp  <- (,) <$> cleanMask m <*> io (keycodeToKeysym dpy code 0)
-      kbs <- currentKeys
-      userCodeDef () (whenJust (M.lookup kp kbs) id)
-      pure (All False)
-  _ -> pure (All True)
+modalEventHook _ = pure (All True)
 
 -- }}}
 

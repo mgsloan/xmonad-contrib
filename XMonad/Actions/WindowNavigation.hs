@@ -45,6 +45,10 @@ module XMonad.Actions.WindowNavigation (
 
 import XMonad hiding (state)
 import XMonad.Prelude (catMaybes, fromMaybe, sortOn)
+-- Point was a Graphics.X11 type on the X11 build.  River needs no such type
+-- for anything but drawing, so it lives with the drawing vocabulary; it is
+-- still the same two coordinates under the same field names.
+import XMonad.Util.River.Compat (Point (..))
 import XMonad.Util.Types (Direction2D(..))
 import qualified XMonad.StackSet as W
 

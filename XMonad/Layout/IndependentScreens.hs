@@ -35,9 +35,9 @@ module XMonad.Layout.IndependentScreens (
 ) where
 
 import Control.Arrow ((***))
-import Graphics.X11.Xinerama
 import XMonad
 import XMonad.Hooks.StatusBar.PP
+import XMonad.River (countOutputs)
 import XMonad.Prelude
 import qualified XMonad.StackSet as W
 import XMonad.Actions.OnScreen (viewOnScreen)
@@ -188,8 +188,12 @@ nthWorkspace n = (!? n) . workspaces' <$> asks config
 -- >     ...
 -- >     }
 --
+-- Works before xmonad starts, as the X11 version did: that opened a second
+-- connection to the X server and asked Xinerama, and this opens an ordinary
+-- Wayland client connection and counts the compositor's outputs.  See
+-- 'XMonad.River.countOutputs'.
 countScreens :: (MonadIO m, Integral i) => m i
-countScreens = fmap genericLength . liftIO $ openDisplay "" >>= liftA2 (<*) getScreenInfo closeDisplay
+countScreens = fromIntegral <$> countOutputs
 
 -- | This turns a pretty-printer into one that is aware of the independent screens. The
 -- converted pretty-printer first filters out physical workspaces on other screens, then

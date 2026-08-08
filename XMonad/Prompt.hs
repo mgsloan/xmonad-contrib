@@ -170,7 +170,9 @@ data XPState =
         , eventBuffer           :: [(KeySym, String, Event)]
         , inputBuffer           :: String
         , currentCompletions    :: Maybe [String]
-        , keyChan               :: Chan (KeySym, String)
+        , keyChan               :: Chan (Maybe (KeySym, String))
+        -- ^ Keys from the prompt's client thread; 'Nothing' when that client
+        -- is gone and no more are coming.
           -- ^ Keystrokes, from the prompt's own Wayland connection.
           --
           -- Upstream reads them from an X event queue with @maskEvent@.  This
@@ -645,8 +647,14 @@ mkXPromptImplementationWith historyKey conf om finish = do
     , csMargin   = (0, 0, 0, 0)
     , csKeyboard = True
     , csDraw    = renderDrawableInto frame
-    , csOnKey   = \sym txt -> writeChan chan (fi sym, txt)
-    , csOnClose = pure ()
+    , csOnKey   = \sym txt -> writeChan chan (Just (fi sym, txt))
+      -- Waking the prompt is the whole job here.  The client can go away
+      -- without the prompt asking -- the compositor closes the surface, the
+      -- startup watchdog decides it was never usable, a panic binding calls
+      -- closeAllClients -- and this thread is blocked reading that channel.
+      -- Without a last message it stays blocked for the life of the session,
+      -- holding a prompt that no longer exists on screen.
+    , csOnClose = writeChan chan Nothing
     }
 
   let st = (initState d nullObject frame s om gc fs hs conf id width)
@@ -725,20 +733,29 @@ eventLoop :: (KeyStroke -> Event -> XP ())
           -> XP ()
 eventLoop handle stopAction = do
     b <- gets eventBuffer
-    (keysym,keystr,event) <- case b of
+    next <- case b of
         []  -> do
                 -- The blocking read upstream does against an X event queue,
                 -- against the channel the prompt's own Wayland connection
                 -- feeds.  Blocking here is safe precisely because this is not
                 -- the window manager's thread.
                 ch <- gets keyChan
-                (ks, str) <- io (readChan ch)
-                pure (ks, str, KeyPressed 0 ks)
+                io (readChan ch) <&> \case
+                  Just (ks, str) -> Just (ks, str, KeyPressed 0 ks)
+                  Nothing        -> Nothing
         (l : ls) -> do
                 modify $ \s -> s { eventBuffer = ls }
-                return l
-    handle (keysym,keystr) event
-    stopAction >>= \stop -> unless stop (eventLoop handle stopAction)
+                return (Just l)
+    case next of
+        -- The client is gone: its surface is destroyed and the keyboard is
+        -- released, so nothing more will arrive and there is nothing left to
+        -- type into.  Stopping with 'successful' still 'False' is what keeps a
+        -- prompt that was closed out from under the user from running its
+        -- action as though the user had accepted it.
+        Nothing -> modify $ \s -> s { done = True }
+        Just (keysym,keystr,event) -> do
+            handle (keysym,keystr) event
+            stopAction >>= \stop -> unless stop (eventLoop handle stopAction)
 
 -- | Default event loop stop condition.
 evDefaultStop :: XP Bool

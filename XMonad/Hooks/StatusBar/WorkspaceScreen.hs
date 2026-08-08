@@ -20,14 +20,12 @@ module XMonad.Hooks.StatusBar.WorkspaceScreen
     -- * Usage
     -- $usage
       combineWithScreen
-    , combineWithScreenName
     , combineWithScreenNumber
     , WorkspaceScreenCombiner
     -- * Limitations
     -- $limitations
     ) where
 
-import           Graphics.X11.Xrandr
 import           XMonad
 import           XMonad.Hooks.StatusBar.PP
 import           XMonad.Prelude
@@ -47,16 +45,13 @@ import qualified XMonad.StackSet               as W
  > myWorkspaceScreenCombiner :: WorkspaceId -> String -> String
  > myWorkspaceScreenCombiner w sc = w <> wrap "(" ")" sc
  >
- > mySB = statusBarProp "xmobar" (combineWithScreenNumber myWorkspaceScreenCombiner xmobarPP)
- > main = xmonad $ withEasySB mySB defToggleStrutsKey def
+ > main = do
+ >   mySB <- statusBarPipe "xmobar" (combineWithScreenNumber myWorkspaceScreenCombiner xmobarPP)
+ >   xmonad $ withSB mySB def
 
  This will annotate the workspace names as following:
 
  > [1(0)] 2 3 4 <5(1)> 6 7 8 9
-
- To use the screen's name instead, checkout 'combineWithScreenName':
-
- > [1(eDP-1)] 2 3 4 <5(HDMI-1)> 6 7 8 9
 
  For advanced cases, use 'combineWithScreen'.
 -}
@@ -73,20 +68,12 @@ import qualified XMonad.StackSet               as W
 -- | Type synonym for a function that combines a workspace name with a screen.
 type WorkspaceScreenCombiner = WorkspaceId -> WindowScreen -> String
 
--- | A helper function that returns a list of screen names.
-screenNames :: X [Maybe String]
-screenNames = do
-    XConf { display, theRoot } <- ask
-    let getName mi = getAtomName display (xrr_moninf_name mi)
-    io
-        $   maybe (pure []) (traverse getName)
-        =<< xrrGetMonitors display theRoot True
-
--- | Combine a workspace name with the screen name it's visible on.
-combineWithScreenName :: (WorkspaceId -> String -> String) -> PP -> X PP
-combineWithScreenName c = combineWithScreen $ do
-    screens <- screenNames
-    return $ \w sc -> maybe w (c w) $ join (screens !? fi (W.screen sc))
+-- Upstream also offers @combineWithScreenName@, which annotates a workspace
+-- with its output's name -- @eDP-1@, @HDMI-1@ -- read from XRandR's monitor
+-- list.  River's window management protocol does not report output names: an
+-- output is a @river_output_v1@ with a position and a size, and the name lives
+-- on the @wl_output@ this backend does not bind.  So only the screen number is
+-- available, and only 'combineWithScreenNumber' is here.
 
 -- | Combine a workspace name with the screen number it's visible on.
 combineWithScreenNumber :: (WorkspaceId -> String -> String) -> PP -> X PP

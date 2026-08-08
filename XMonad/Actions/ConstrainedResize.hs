@@ -23,6 +23,7 @@ module XMonad.Actions.ConstrainedResize (
 ) where
 
 import XMonad
+import XMonad.River (moveResizeWindow)
 
 -- $usage
 --
@@ -43,16 +44,22 @@ import XMonad
 -- "XMonad.Doc.Extending#Editing_mouse_bindings".
 
 -- | Resize (floating) window with optional aspect ratio constraints.
+--
+-- The pointer is warped to the window's bottom-right corner, as it was under
+-- X11 -- there the warp was relative to the window, and here it is the same
+-- point named in river's global coordinates, which is the only space river
+-- talks about.  Size hints need no application here because
+-- 'XMonad.River.moveResizeWindow' applies them.
 mouseResizeWindow :: Window -> Bool -> X ()
 mouseResizeWindow w c = whenX (isClient w) $ withDisplay $ \d ->
   withWindowAttributes d w $ \wa -> do
-    sh <- io $ getWMNormalHints d w
-    io $ warpPointer d none w 0 0 0 0 (fromIntegral (wa_width wa)) (fromIntegral (wa_height wa))
+    warpPointer (wa_x wa + fromIntegral (wa_width wa))
+                (wa_y wa + fromIntegral (wa_height wa))
     mouseDrag (\ex ey -> do
-                 let x = ex - fromIntegral (wa_x wa)
-                     y = ey - fromIntegral (wa_y wa)
-                     sz = if c then (max x y, max x y) else (x,y)
-                 io $ resizeWindow d w `uncurry`
-                    applySizeHintsContents sh sz
+                 let x = max 1 (ex - wa_x wa)
+                     y = max 1 (ey - wa_y wa)
+                     (dw, dh) = if c then (max x y, max x y) else (x,y)
+                 moveResizeWindow w (Rectangle (wa_x wa) (wa_y wa)
+                                               (fromIntegral dw) (fromIntegral dh))
                  float w)
               (float w)

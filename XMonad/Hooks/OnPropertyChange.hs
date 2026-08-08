@@ -94,23 +94,32 @@ import XMonad.Prelude
 -- >
 -- >    myDynHook = composeAll [...]
 --
+-- The property name is still how a caller says /which/ change it cares about,
+-- but there are no properties and no atom to intern.  River reports the two
+-- things a window can change about itself as their own events -- its title and
+-- its app id -- so the name is matched against the X11 property that carried
+-- the same thing.  A name naming anything else never fires, which is exactly
+-- what the X11 version did with a property no window ever set.
 onXPropertyChange :: String -> ManageHook -> Event -> X All
-onXPropertyChange prop hook PropertyEvent { ev_window = w, ev_atom = a, ev_propstate = ps } = do
-  pa <- getAtom prop
-  when (ps == propertyNewValue && a == pa) $ do
+onXPropertyChange prop hook ev = do
+  let matches = case ev of
+        WindowTitleChanged{ ev_window = w } | prop `elem` titleProps -> Just w
+        WindowAppIdChanged{ ev_window = w } | prop `elem` classProps -> Just w
+        _ -> Nothing
+  whenJust matches $ \w -> do
     g <- appEndo <$> userCodeDef (Endo id) (runQuery hook w)
     windows g
   return mempty -- so anything else also processes it
-onXPropertyChange _ _ _ = return mempty
+ where
+  titleProps = ["WM_NAME", "_NET_WM_NAME"]
+  classProps = ["WM_CLASS", "_NET_WM_CLASS"]
 
 -- | A shorthand for dynamic titles; i.e., applications changing their
 -- @WM_NAME@ property.
 onTitleChange :: ManageHook -> Event -> X All
--- strictly, this should also check _NET_WM_NAME. practically, both will
--- change and each gets its own PropertyEvent, so we'd need to record that
--- we saw the event for that window and ignore the second one. Instead, just
--- trust that nobody sets only _NET_WM_NAME. (I'm sure this will prove false,
--- since there's always someone who can't bother being compliant.)
+-- Upstream had to worry about WM_NAME and _NET_WM_NAME each producing an event
+-- for the same rename.  River reports one @title@ event and there is one
+-- title, so the duplicate cannot arise.
 onTitleChange = onXPropertyChange "WM_NAME"
 
 -- | A shorthand for dynamic resource and class names; i.e.,

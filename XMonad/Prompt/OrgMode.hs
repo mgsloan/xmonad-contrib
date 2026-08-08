@@ -62,7 +62,7 @@ module XMonad.Prompt.OrgMode (
 import XMonad.Prelude
 
 import XMonad (X, io, whenJust)
-import XMonad.Prompt (XPConfig, XPrompt (showXPrompt), mkXPromptWithReturn, mkComplFunFromList, ComplFunction)
+import XMonad.Prompt (XPConfig, XPrompt (showXPrompt), mkXPrompt, mkComplFunFromList, ComplFunction)
 import XMonad.Util.Parser
 import XMonad.Util.XSelection (getSelection)
 import XMonad.Util.Run
@@ -236,7 +236,7 @@ orgPrompt
                --   a single @*@
   -> FilePath  -- ^ Path to @.org@ file, e.g. @home\/me\/todos.org@
   -> X ()
-orgPrompt xpc = (void . mkOrgPrompt xpc =<<) .: mkOrgCfg NoClpSupport
+orgPrompt xpc = ((\cfg -> mkOrgPrompt xpc cfg (pure ())) =<<) .: mkOrgCfg NoClpSupport
 
 -- | Like 'orgPrompt', but additionally make use of the primary
 -- selection.  If it is a URL, then use an org-style link
@@ -246,7 +246,7 @@ orgPrompt xpc = (void . mkOrgPrompt xpc =<<) .: mkOrgCfg NoClpSupport
 -- The prompt will display a little @+ PS@ in the window
 -- after the type of note.
 orgPromptPrimary :: XPConfig -> String -> FilePath -> X ()
-orgPromptPrimary xpc = (void . mkOrgPrompt xpc =<<) .: mkOrgCfg PrimarySelection
+orgPromptPrimary xpc = ((\cfg -> mkOrgPrompt xpc cfg (pure ())) =<<) .: mkOrgCfg PrimarySelection
 
 -- | Internal type in order to generate a nice prompt in
 -- 'orgPromptRefile' and 'orgPromptRefileTo'.
@@ -275,15 +275,15 @@ orgPromptRefile xpc str fp = do
     contents <- hGetContents handle
     contents <$ (contents `deepseq` hClose handle)
 
-  -- Save the entry as soon as possible.
-  notCancelled <- mkOrgPrompt xpc orgCfg
-  when notCancelled $
-    -- If the user didn't cancel, try to parse the org file and offer to
-    -- refile the entry if possible.
+  -- Save the entry as soon as possible; only then parse the org file and
+  -- offer to refile the entry.  Both steps are continuations rather than
+  -- statements, because a prompt cannot hand its answer back -- see Note [No
+  -- mkXPromptWithReturn] in "XMonad.Prompt".  "The user cancelled" is
+  -- expressed by the continuation never running.
+  mkOrgPrompt xpc orgCfg $
     whenJust (runParser pOrgFile fileContents) $ \headings ->
-      mkXPromptWithReturn Refile xpc (completeHeadings headings) pure >>= \case
-        Nothing     -> pure ()
-        Just parent -> refile parent (orgFile orgCfg)
+      mkXPrompt Refile xpc (completeHeadings headings) $ \parent ->
+        refile parent (orgFile orgCfg)
  where
   completeHeadings :: [Heading] -> ComplFunction
   completeHeadings = mkComplFunFromList xpc . map headingText
@@ -308,16 +308,20 @@ orgPromptRefileTo
   -> FilePath
   -> X ()
 orgPromptRefileTo xpc refileHeading str fp = do
-  orgCfg       <- mkOrgCfg NoClpSupport str fp
-  notCancelled <- mkOrgPrompt xpc orgCfg
-  when notCancelled $ refile refileHeading (orgFile orgCfg)
+  orgCfg <- mkOrgCfg NoClpSupport str fp
+  mkOrgPrompt xpc orgCfg $ refile refileHeading (orgFile orgCfg)
 
--- | Create the actual prompt.  Returns 'False' when the input was
--- cancelled by the user (by, for example, pressing @Esc@ or @C-g@) and
--- 'True' otherwise.
-mkOrgPrompt :: XPConfig -> OrgMode -> X Bool
-mkOrgPrompt xpc oc@OrgMode{ todoHeader, orgFile, clpSupport } =
-  isJust <$> mkXPromptWithReturn oc xpc (const (pure [])) appendNote
+-- | Create the actual prompt.  The final argument runs once the note has been
+-- appended, and does not run at all when the input was cancelled by the user
+-- (by, for example, pressing @Esc@ or @C-g@).
+--
+-- The X11 version answered @X Bool@, 'False' meaning cancelled.  A prompt
+-- cannot answer here: it runs on its own thread, and this one is the event
+-- loop that has to deliver its keystrokes, so waiting for the answer
+-- deadlocks.  Same information, handed forward instead of back.
+mkOrgPrompt :: XPConfig -> OrgMode -> X () -> X ()
+mkOrgPrompt xpc oc@OrgMode{ todoHeader, orgFile, clpSupport } onDone =
+  mkXPrompt oc xpc (const (pure [])) (\input -> appendNote input >> onDone)
  where
   -- | Parse the user input, create an @org-mode@ note out of that and
   -- try to append it to the given file.

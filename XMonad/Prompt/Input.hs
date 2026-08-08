@@ -84,12 +84,17 @@ instance XPrompt InputPrompt  where
     showXPrompt (InputPrompt s) = s ++ ": "
 
 -- | Given a prompt configuration and some prompt text, create an X
---   action which pops up a prompt waiting for user input, and returns
---   whatever they type.  Note that the type of the action is @X
---   (Maybe String)@, which reflects the fact that the user might
---   cancel the prompt (resulting in @Nothing@), or enter an input
---   string @s@ (resulting in @Just s@).
-inputPrompt :: XPConfig -> String -> X (Maybe String)
+--   action which pops up a prompt waiting for user input and hands
+--   whatever they type to the given function.
+--
+--   The X11 version answered @X (Maybe String)@, @Nothing@ meaning the user
+--   cancelled.  It cannot here: the prompt runs on its own thread and this one
+--   is the event loop that has to deliver its keystrokes, so waiting for the
+--   answer deadlocks.  See Note [No mkXPromptWithReturn] in "XMonad.Prompt".
+--   The same two outcomes survive -- the function is applied to the input, or
+--   it is never run -- and '?+' means that every call site written for the old
+--   type still reads, and compiles, unchanged.
+inputPrompt :: XPConfig -> String -> (String -> X ()) -> X ()
 inputPrompt c p = inputPromptWithCompl c p (const (return []))
 
 -- | The same as 'inputPrompt', but with a completion function.  The
@@ -97,8 +102,8 @@ inputPrompt c p = inputPromptWithCompl c p (const (return []))
 --   "XMonad.Prompt".  The 'mkComplFunFromList' utility function, also
 --   defined in "XMonad.Prompt", is useful for creating such a
 --   function from a known list of possibilities.
-inputPromptWithCompl :: XPConfig -> String -> ComplFunction -> X (Maybe String)
-inputPromptWithCompl c p compl = mkXPromptWithReturn (InputPrompt p) c compl return
+inputPromptWithCompl :: XPConfig -> String -> ComplFunction -> (String -> X ()) -> X ()
+inputPromptWithCompl c p compl = mkXPrompt (InputPrompt p) c compl
 
 
 infixr 1 ?+
@@ -108,9 +113,10 @@ infixr 1 ?+
 --   action. If the user cancels the input prompt, the
 --   second function will not be run.
 --
---   The astute student of types will note that this is actually a
---   very general combinator and has nothing in particular to do
---   with input prompts.  If you find a more general use for it and
---   want to move it to a different module, be my guest.
-(?+) :: (Monad m) => m (Maybe a) -> (a -> m ()) -> m ()
-x ?+ k = x >>= maybe (return ()) k
+--   Where the X11 version bound a @Maybe@ that the prompt had returned, this
+--   supplies the continuation that the prompt will call.  Both spell the same
+--   thing at the call site, which is the point of keeping the operator:
+--
+--   > inputPrompt def "Fire" ?+ fireEmployee
+(?+) :: ((a -> m ()) -> m ()) -> (a -> m ()) -> m ()
+x ?+ k = x k

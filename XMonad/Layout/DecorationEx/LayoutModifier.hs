@@ -210,20 +210,24 @@ instance (DecorationEngine engine widget Window, DecorationGeometry geom Window,
 
     modifierDescription (DecorationEx _ _ _ engine geom) = describeEngine engine ++ describeGeometry geom
 
--- | By default 'DecorationEx' handles 'PropertyEvent' and 'ExposeEvent'
--- only.
+-- | Repaint a decoration when the window it belongs to is renamed.
+--
+-- Upstream matches a @PropertyEvent@ against
+-- @propsToRepaintDecoration@ -- @WM_NAME@, @_NET_WM_NAME@, @WM_STATE@,
+-- @WM_HINTS@ -- and an @ExposeEvent@ to repaint on damage.  River has neither.
+-- What it has is an event per thing a window can change about itself, and of
+-- that list only the name is one of them, so this matches the two events that
+-- carry it.  The expose case is simply gone: the compositor owns damage and
+-- repaint, and never asks the window manager to redraw.
 handleEvent :: (Shrinker shrinker, DecorationEngine engine widget Window) => engine widget Window -> shrinker -> Theme engine widget -> DecorationLayoutState engine -> Event -> X ()
 handleEvent engine shrinker theme (DecorationLayoutState {..}) e
-    | PropertyEvent {ev_window = w, ev_atom = atom} <- e
-    , Just i <- w `elemIndex` map wdOrigWindow dsDecorations = do
-        supportedAtoms <- propsToRepaintDecoration engine
-        when (atom `elem` supportedAtoms) $ do
-          -- io $ putStrLn $ "property event on " ++ show w -- ++ ": " ++ fromMaybe "<?>" atomName
-          updateDeco engine shrinker theme dsStyleState (dsDecorations !! i) False
-    | ExposeEvent   {ev_window = w} <- e
-    , Just i <- w `elemIndex` mapMaybe wdDecoWindow dsDecorations = do
-        -- io $ putStrLn $ "expose event on " ++ show w
-        updateDeco engine shrinker theme dsStyleState (dsDecorations !! i) True
+    | Just w <- renamed e
+    , Just i <- w `elemIndex` map wdOrigWindow dsDecorations =
+        updateDeco engine shrinker theme dsStyleState (dsDecorations !! i) False
+  where
+    renamed WindowTitleChanged{ev_window = w} = Just w
+    renamed WindowAppIdChanged{ev_window = w} = Just w
+    renamed _                                 = Nothing
 handleEvent _ _ _ _ _ = return ()
 
 -- | Initialize the 'DecorationState' by initializing the font
@@ -277,10 +281,10 @@ createDecos _ _ _ _ _ _ _ _ [] = return []
 createDecoWindow :: (DecorationEngine engine widget Window) => engine widget Window -> Theme engine widget -> Rectangle -> X Window
 createDecoWindow engine theme rect = do
   let mask = Just $ decorationXEventMask engine
-  w <- createNewWindow rect mask (defaultBgColor theme) True
-  d <- asks display
-  io $ setClassHint d w (ClassHint "xmonad-decoration" "xmonad")
-  return w
+  -- No class hint.  WM_CLASS is a property a *client* sets so that a window
+  -- manager can recognise it; this surface has no client and is not a window
+  -- river knows about, so there is nobody to tell and nobody to read it.
+  createNewWindow rect mask (defaultBgColor theme) True
 
 showDecos :: [WindowDecoration] -> X ()
 showDecos dd =

@@ -26,6 +26,7 @@ module XMonad.Actions.UpdatePointer
 
 import XMonad
 import XMonad.Prelude
+import XMonad.River (pointerPosition, windowUnderPointer)
 import XMonad.StackSet (member, peek, screenDetail, current)
 
 import Control.Arrow ((&&&), (***))
@@ -68,21 +69,24 @@ import Control.Arrow ((&&&), (***))
 updatePointer :: (Rational, Rational) -> (Rational, Rational) -> X ()
 updatePointer refPos ratio = do
   ws <- gets windowset
-  dpy <- asks display
   let defaultRect = screenRect $ screenDetail $ current ws
   rect <- case peek ws of
         Nothing -> return defaultRect
         Just w  -> maybe defaultRect windowAttributesToRectangle
                <$> safeGetWindowAttributes w
 
-  root <- asks theRoot
   mouseIsMoving <- asks mouseFocused
-  (_sameRoot,_,currentWindow,rootX,rootY,_,_,_) <- io $ queryPointer dpy root
+  -- queryPointer answered three things at once: where the pointer is and what
+  -- it is over.  River separates them; see 'XMonad.River.windowUnderPointer'
+  -- for why the second is computed rather than asked.  A pointer over no
+  -- managed window is what @currentWindow == none@ meant.
+  (rootX, rootY) <- fromMaybe (0, 0) <$> pointerPosition
+  currentWindow <- windowUnderPointer
   drag <- gets dragging
   unless (pointWithin (fi rootX) (fi rootY) rect
           || mouseIsMoving
           || isJust drag
-          || not (currentWindow `member` ws || currentWindow == none)) $ let
+          || not (maybe True (`member` ws) currentWindow)) $ let
     -- focused rectangle
     (rectX, rectY) = (rect_x &&& rect_y) rect
     (rectW, rectH) = (fi . rect_width &&& fi . rect_height) rect
@@ -94,7 +98,7 @@ updatePointer refPos ratio = do
     boundsY = join (***) (lerp (snd ratio) refY) (rectY, rectY + rectH)
     -- ideally we ought to move the pointer in a straight line towards the
     -- reference point until it is within the above bounds, but…
-    in io $ warpPointer dpy none root 0 0 0 0
+    in warpPointer
         (round . clip boundsX $ fi rootX)
         (round . clip boundsY $ fi rootY)
 

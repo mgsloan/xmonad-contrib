@@ -41,6 +41,7 @@ import qualified XMonad.StackSet as S
 
 import XMonad.Layout.WindowArranger
 import XMonad.Actions.FloatKeys
+import XMonad.River (pointerPosition)
 
 import qualified Data.Map as M
 import Data.Ratio ((%))
@@ -314,10 +315,15 @@ organizeClients ws w floats
       --  - we reverse the lists, since the newer/more important
       --    windows are usually near the head.
 
+-- | Where the pointer is.
+--
+-- The window argument selected which root the X11 answer was relative to, and
+-- river has one coordinate space, so it no longer selects anything.  Before
+-- the pointer has moved at all there is no answer; the origin is what the
+-- placement policies treat as "no preference", which is what an absent pointer
+-- means.
 getPointer :: Window -> X (Position, Position)
-getPointer window = do d <- asks display
-                       (_,_,_,x,y,_,_,_) <- io $ queryPointer d window
-                       return (fi x,fi y)
+getPointer _ = fromMaybe (0, 0) <$> pointerPosition
 
 -- | Return values are, in order: window's rectangle,
 -- other windows' rectangles and pointer's coordinates.

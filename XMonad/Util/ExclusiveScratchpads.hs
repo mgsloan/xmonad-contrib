@@ -42,8 +42,8 @@ module XMonad.Util.ExclusiveScratchpads
 import XMonad.Prelude
 import XMonad
 import XMonad.Actions.Minimize
-import XMonad.Actions.TagWindows (addTag,delTag)
-import XMonad.Hooks.ManageHelpers (doRectFloat,isInProperty)
+import XMonad.Actions.TagWindows (addTag,delTag,hasTag)
+import XMonad.Hooks.ManageHelpers (doRectFloat,isMinimized)
 
 import qualified XMonad.StackSet as W
 import qualified Data.List.NonEmpty as NE
@@ -218,9 +218,17 @@ joinQueries :: [Query Bool] -> Query Bool
 joinQueries = foldl (<||>) (liftX $ return False)
 
 -- | Useful queries
+--
+-- Both used to be property reads.  The tag 'isExclusive' looks for is set by
+-- "XMonad.Actions.TagWindows", which kept its tags in a @_XMONAD_TAGS@ text
+-- property under X11 and keeps them in xmonad's state here, so the question
+-- goes to the module that owns the answer.  'isMaximized' read
+-- @_NET_WM_STATE_HIDDEN@, which "XMonad.Actions.Minimize" published alongside
+-- its own bookkeeping; 'XMonad.Hooks.ManageHelpers.isMinimized' consults that
+-- bookkeeping, which is where the answer always lived.
 isExclusive, isMaximized :: Query Bool
-isExclusive = notElem "_XSP_NOEXCLUSIVE" . words <$> stringProperty "_XMONAD_TAGS"
-isMaximized = not <$> isInProperty "_NET_WM_STATE" "_NET_WM_STATE_HIDDEN"
+isExclusive = ask >>= \w -> liftX (not <$> hasTag "_XSP_NOEXCLUSIVE" w)
+isMaximized = not <$> isMinimized
 
 -- -----------------------------------------------------------------------------------
 

@@ -27,6 +27,7 @@ module XMonad.Actions.FloatKeys (
 
 import XMonad
 import XMonad.Prelude (fi)
+import XMonad.River (moveResizeWindow)
 import XMonad.Util.Types
 
 -- $usage
@@ -78,8 +79,9 @@ directionResizeWindow delta dir win = case dir of
 keysMoveWindow :: ChangeDim -> Window -> X ()
 keysMoveWindow (dx,dy) w = whenX (isClient w) $ withDisplay $ \d ->
   withWindowAttributes d w $ \wa -> do
-    io $ moveWindow d w (fi (fi (wa_x wa) + dx))
-                        (fi (fi (wa_y wa) + dy))
+    moveResizeWindow w (Rectangle (fi (fi (wa_x wa) + dx))
+                                  (fi (fi (wa_y wa) + dy))
+                                  (wa_width wa) (wa_height wa))
     float w
 
 -- | @keysMoveWindowTo (x, y) (gx, gy)@ moves the window relative
@@ -95,8 +97,9 @@ keysMoveWindow (dx,dy) w = whenX (isClient w) $ withDisplay $ \d ->
 keysMoveWindowTo :: P -> G -> Window -> X ()
 keysMoveWindowTo (x,y) (gx, gy) w = whenX (isClient w) $ withDisplay $ \d ->
   withWindowAttributes d w $ \wa -> do
-    io $ moveWindow d w (x - round (gx * fi (wa_width wa)))
-                        (y - round (gy * fi (wa_height wa)))
+    moveResizeWindow w (Rectangle (x - round (gx * fi (wa_width wa)))
+                                  (y - round (gy * fi (wa_height wa)))
+                                  (wa_width wa) (wa_height wa))
     float w
 
 type G = (Rational, Rational)
@@ -151,6 +154,8 @@ keysMoveResize f move resize w = whenX (isClient w) $ withDisplay $ \d ->
     let wa_dim = (fi $ wa_width wa, fi $ wa_height wa)
         wa_pos = (fi $ wa_x wa, fi $ wa_y wa)
         (wn_pos, wn_dim) = f sh wa_pos wa_dim move resize
-    io $ resizeWindow d w `uncurry` wn_dim
-    io $ moveWindow d w `uncurry` wn_pos
+    -- X11 needed two calls and river needs one; the position and the size were
+    -- computed together anyway.
+    moveResizeWindow w (Rectangle (fst wn_pos) (snd wn_pos)
+                                  (fst wn_dim) (snd wn_dim))
     float w

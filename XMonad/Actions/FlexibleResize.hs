@@ -22,7 +22,7 @@ module XMonad.Actions.FlexibleResize (
 
 import XMonad
 import XMonad.Prelude (fi)
-import Foreign.C.Types
+import qualified XMonad.River as River
 
 -- $usage
 -- To use, first import this module into your @xmonad.hs@ file:
@@ -53,23 +53,27 @@ mouseResizeEdgeWindow
 mouseResizeEdgeWindow edge w = whenX (isClient w) $ withDisplay $ \d ->
   withWindowAttributes d w $ \wa -> do
     sh <- io $ getWMNormalHints d w
-    (_, _, _, _, _, ix, iy, _) <- io $ queryPointer d w
-    let
+    -- X11's queryPointer answered relative to the window it was asked about;
+    -- river reports one global position and nothing else, so the subtraction
+    -- that the server used to do happens here.
+    ptr <- River.pointerPosition
+    whenJust ptr $ \(px, py) -> do
+      let
         pos_x  = fi $ wa_x wa
         pos_y  = fi $ wa_y wa
         width  = fi $ wa_width wa
         height = fi $ wa_height wa
-        west  = findPos ix width
-        north = findPos iy height
+        west  = findPos (px - wa_x wa) width
+        north = findPos (py - wa_y wa) height
         (cx, fx, gx) = mkSel west  width  pos_x
         (cy, fy, gy) = mkSel north height pos_y
-    io $ warpPointer d none w 0 0 0 0 cx cy
-    mouseDrag (\ex ey -> do let (nw,nh) = applySizeHintsContents sh (gx ex, gy ey)
-                            io $ moveResizeWindow d w (fx nw) (fy nh) nw nh
-                            float w)
-              (float w)
+      warpPointer (wa_x wa + cx) (wa_y wa + cy)
+      mouseDrag (\ex ey -> do let (nw,nh) = applySizeHintsContents sh (gx ex, gy ey)
+                              River.moveResizeWindow w (Rectangle (fx nw) (fy nh) nw nh)
+                              float w)
+                (float w)
     where
-    findPos :: CInt -> Position -> Maybe Bool
+    findPos :: Position -> Position -> Maybe Bool
     findPos m s
       | p < 0.5 - edge/2 = Just True
       | p < 0.5 + edge/2 = Nothing

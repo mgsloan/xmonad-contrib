@@ -24,6 +24,7 @@ module XMonad.Layout.DecorationAddons (
 import XMonad
 import qualified XMonad.StackSet as W
 import XMonad.Layout.Decoration
+import XMonad.River (pointerPosition, windowUnderPointer)
 import XMonad.Actions.WindowMenu
 import XMonad.Actions.Minimize
 import XMonad.Layout.Maximize
@@ -79,8 +80,9 @@ defaultThemeWithButtons = def {
 -- with "XMonad.Layout.PositionStoreFloat".
 handleScreenCrossing :: Window -> Window -> X Bool
 handleScreenCrossing w decoWin = withDisplay $ \d -> do
-    root <- asks theRoot
-    (_, _, _, px, py, _, _, _) <- io $ queryPointer d root
+    -- queryPointer's root-relative pair; river reports that one position and
+    -- nothing else.  See 'XMonad.River.pointerPosition'.
+    (px, py) <- fromMaybe (0, 0) <$> pointerPosition
     ws <- gets windowset
     sc <- fromMaybe (W.current ws) <$> pointScreen (fi px) (fi py)
     maybeWksp <- screenWorkspace $ W.screen sc
@@ -95,7 +97,10 @@ handleScreenCrossing w decoWin = withDisplay $ \d -> do
                         -- apparently we have to switch to the workspace first
                         -- to make this work, which unforunately introduces some flicker
                         windows $ \ws' -> W.view wksp ws'
-                        (_, _, selWin, _, _, _, _, _) <- io $ queryPointer d root
+                        -- queryPointer's third result, the window under the
+                        -- pointer; see 'XMonad.River.windowUnderPointer' for
+                        -- why river computes rather than answers this.
+                        selWin <- fromMaybe w <$> windowUnderPointer
 
                         -- adjust PositionStore
                         let oldScreenRect = screenRect . W.screenDetail $ W.current ws

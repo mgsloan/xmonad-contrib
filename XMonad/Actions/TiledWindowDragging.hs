@@ -23,6 +23,9 @@ where
 
 import           XMonad
 import           XMonad.Prelude
+import           XMonad.River                   ( pointerPosition
+                                                , windowUnderPointer
+                                                )
 import qualified XMonad.StackSet               as W
 import           XMonad.Layout.DraggingVisualizer
 
@@ -66,9 +69,15 @@ dragWindow window = whenX (isClient window) $ withDisplay $ \dpy ->
 
 
 -- | get the pointer offset relative to the given windows root coordinates
+--
+-- Despite the name the X11 version read @queryPointer@'s root-relative pair
+-- rather than its window-relative one, so the window argument only ever chose
+-- which screen the answer was measured against.  River has a single coordinate
+-- space, so the argument has nothing left to select and the answer is the
+-- same.
 getPointerOffset :: Window -> X (Int, Int)
-getPointerOffset win = do
-    (_, _, _, oX, oY, _, _, _) <- withDisplay (\d -> io $ queryPointer d win)
+getPointerOffset _ = do
+    (oX, oY) <- fromMaybe (0, 0) <$> pointerPosition
     return (fi oX, fi oY)
 
 -- | return a tuple of windowX, windowY, windowWidth, windowHeight
@@ -77,8 +86,11 @@ getWindowPlacement wa = (fi $ wa_x wa, fi $ wa_y wa, fi $ wa_width wa, fi $ wa_h
 
 performWindowSwitching :: Window -> X ()
 performWindowSwitching win = do
-    root                          <- asks theRoot
-    (_, _, selWin, _, _, _, _, _) <- withDisplay (\d -> io $ queryPointer d root)
+    -- @queryPointer@'s third result, the window under the pointer.  River has
+    -- no such query; see 'XMonad.River.windowUnderPointer'.  Landing on no
+    -- window swaps @win@ with itself, which is what the X11 version did when
+    -- the answer was @none@.
+    selWin                        <- fromMaybe win <$> windowUnderPointer
     ws                            <- gets windowset
     let allWindows = W.index ws
     when ((win `elem` allWindows) && (selWin `elem` allWindows)) $ do

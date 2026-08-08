@@ -198,15 +198,13 @@ instance Eq a => DecorationStyle TabbedDecoration a where
     describeDeco (Tabbed D _ ) = "Tabbed Bottom"
     describeDeco (Tabbed L _ ) = "Tabbed Left"
     describeDeco (Tabbed R _ ) = "Tabbed Right"
-    decorationEventHook _ ds ButtonEvent { ev_window     = ew
-                                         , ev_event_type = et
-                                         , ev_button     = eb }
-        | et == buttonPress
-        , Just ((w,_),_) <- findWindowByDecoration ew ds =
-           if eb == button2
-               then killWindow w
-               else focus w
-    decorationEventHook _ _ _ = return ()
+    -- Upstream overrides decorationEventHook here, to focus the window a tab
+    -- belongs to and to close it on a middle click.  Both need a button press
+    -- attributed to a decoration, which river does not report; see
+    -- 'XMonad.Layout.Decoration.handleMouseFocusDrag' for why.  Leaving the
+    -- override out inherits that function, so clicking a tab says so once
+    -- rather than silently doing nothing.  Tabs still draw, lay out and
+    -- retitle; only the click is missing.
 
     pureDecoration (Tabbed lc sh) wt ht _ s wrs (w,r@(Rectangle x y wh hh))
         = if (sh == Always && numWindows > 0) || numWindows > 1

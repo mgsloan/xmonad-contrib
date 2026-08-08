@@ -28,6 +28,7 @@ module XMonad.Layout.WindowSwitcherDecoration
 import XMonad
 import XMonad.Layout.Decoration
 import XMonad.Layout.DecorationAddons
+import XMonad.River (windowUnderPointer)
 import XMonad.Layout.ImageButtonDecoration
 import XMonad.Layout.DraggingVisualizer
 import qualified XMonad.StackSet as S
@@ -121,9 +122,11 @@ handleTiledDraggingInProgress ex ey (mainw, r) x y = do
 
 performWindowSwitching :: Window -> X ()
 performWindowSwitching win =
-    withDisplay $ \d -> do
-       root <- asks theRoot
-       (_, _, selWin, _, _, _, _, _) <- io $ queryPointer d root
+    withDisplay $ \_d -> do
+       -- queryPointer's third result, the window under the pointer; see
+       -- 'XMonad.River.windowUnderPointer'.  Landing on no window swaps @win@
+       -- with itself, which is what the X11 version did for @none@.
+       selWin <- fromMaybe win <$> windowUnderPointer
        ws <- gets windowset
        let allWindows = S.index ws
        -- do a little double check to be sure

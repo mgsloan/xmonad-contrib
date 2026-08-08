@@ -58,7 +58,7 @@ import Data.Map.Strict (Map, (!?))
 import XMonad
 import XMonad.Actions.DynamicWorkspaces (addHiddenWorkspace)
 import XMonad.Actions.SpawnOn (spawnHere)
-import XMonad.Actions.TagWindows (addTag, delTag)
+import XMonad.Actions.TagWindows (addTag, delTag, hasTag)
 import XMonad.Hooks.ManageHelpers (doRectFloat)
 import XMonad.Hooks.RefocusLast (withRecentsIn)
 import XMonad.Hooks.StatusBar.PP (PP, ppSort)
@@ -575,8 +575,12 @@ hideUnwanted nspWindow = withWindowSet $ \winSet -> do
                 whenX (runQuery (isUnwanted unwanted) win) $
                     shiftToNSP (W.workspaces winSet) ($ win)
   where
+    -- The tag this reads is set by "XMonad.Actions.TagWindows".  Under X11
+    -- that module kept its tags in a @_XMONAD_TAGS@ text property, so reading
+    -- the property was reading its store; here the store is xmonad's own
+    -- state, so the question is asked of the module that owns it.
     notIgnored :: Query Bool
-    notIgnored = notElem "_NSP_NOEXCLUSIVE" . words <$> stringProperty "_XMONAD_TAGS"
+    notIgnored = ask >>= \w -> liftX (not <$> hasTag "_NSP_NOEXCLUSIVE" w)
 
     isUnwanted :: [NamedScratchpad] -> Query Bool
     isUnwanted = (notIgnored <&&>) . foldr (\nsp qs -> qs <||> query nsp) (pure False)

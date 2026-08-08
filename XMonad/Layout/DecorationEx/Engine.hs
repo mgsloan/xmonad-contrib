@@ -43,6 +43,10 @@ import XMonad
 import XMonad.Prelude
 import qualified XMonad.StackSet as W
 import XMonad.Layout.Decoration (Shrinker (..), shrinkWhile, shrinkText)
+import XMonad.River (warnUnimplemented, windowUnderPointer)
+import XMonad.Util.River.Compat (EventMask, commitDrawable, copyArea,
+                                 createGC, createPixmap, fillRectangle,
+                                 freeGC, freePixmap, setForeground)
 import XMonad.Layout.DraggingVisualizer (DraggingVisualizerMsg (..))
 import XMonad.Layout.DecorationAddons (handleScreenCrossing)
 import XMonad.Util.Font
@@ -197,22 +201,17 @@ class (Read (engine widget a), Show (engine widget a),
       shrinkWhile s (\n -> do size <- io $ textWidthXMF dpy font n
                               return $ size > fromIntegral wh) name
 
-    -- | Mask of X11 events on which the decoration engine should do something.
-    -- @exposureMask@ should be included here so that decoration engine could
-    -- repaint decorations when they are shown on screen.
-    -- @buttonPressMask@ should be included so that decoration engine could
-    -- response to mouse clicks.
-    -- Other events can be added to custom implementations of DecorationEngine.
+    -- | Mask of events on which the decoration engine should do something.
+    --
+    -- Kept so that a custom engine's instance still compiles, and ignored, the
+    -- same treatment 'XMonad.Util.XUtils.createNewWindow' gives the mask it is
+    -- handed: river delivers exactly the events its management protocol
+    -- defines and there is nothing to select.  Upstream's default asks for
+    -- @exposureMask@ and @buttonPressMask@; the compositor owns repaint, and
+    -- clicks on a decoration are not reported at all -- see
+    -- 'handleMouseFocusDrag'.
     decorationXEventMask :: engine widget a -> EventMask
-    decorationXEventMask _ = exposureMask .|. buttonPressMask
-
-    -- | List of X11 window property atoms of original (client) windows,
-    -- change of which should trigger repainting of decoration.
-    -- For example, if @WM_NAME@ changes it means that we have to redraw
-    -- window title.
-    propsToRepaintDecoration :: engine widget a -> X [Atom]
-    propsToRepaintDecoration _ =
-      mapM getAtom ["WM_NAME", "_NET_WM_NAME", "WM_STATE", "WM_HINTS"]
+    decorationXEventMask _ = 0
 
     -- | Generic event handler, which recieves X11 events on decoration
     -- window.
@@ -301,9 +300,12 @@ handleDraggingInProgress ex ey (mainw, r) x y = do
 
 performWindowSwitching :: Window -> X ()
 performWindowSwitching win =
-    withDisplay $ \d -> do
-       root <- asks theRoot
-       (_, _, selWin, _, _, _, _, _) <- io $ queryPointer d root
+    withDisplay $ \_d -> do
+       -- queryPointer's third result, the window under the pointer; see
+       -- 'XMonad.River.windowUnderPointer' for why river computes rather than
+       -- answers this.  Landing on no window swaps @win@ with itself, which is
+       -- what the X11 version did for @none@.
+       selWin <- fromMaybe win <$> windowUnderPointer
        ws <- gets windowset
        let allWindows = W.index ws
        -- do a little double check to be sure
@@ -402,24 +404,24 @@ mkDrawData _ theme decoState origWindow decoRect = do
 
 -- | Mouse focus and mouse drag are handled by the same function, this
 -- way we can start dragging unfocused windows too.
+--
+-- Says so once and does nothing, exactly as
+-- 'XMonad.Layout.Decoration.handleMouseFocusDrag' does, and for the same
+-- reason: river reports button presses against a @river_window_v1@, and a
+-- decoration is a surface the window manager drew, so river attributes the
+-- click to no window.  Everything else about a @DecorationEx@ decoration
+-- works -- it is created, laid out, drawn, retitled and destroyed -- but the
+-- widgets in it cannot be clicked, and a title bar cannot be dragged.
 handleMouseFocusDrag :: (DecorationEngine engine widget a, Shrinker shrinker) => engine widget a -> Theme engine widget -> DecorationLayoutState engine -> shrinker -> Event -> X ()
-handleMouseFocusDrag ds theme (DecorationLayoutState {dsDecorations}) _ (ButtonEvent {ev_window, ev_x_root, ev_y_root, ev_event_type, ev_button})
-    | ev_event_type == buttonPress
-    , Just (WindowDecoration {..}) <- findDecoDataByDecoWindow ev_window dsDecorations = do
-        let decoRect@(Rectangle dx dy _ _) = fromJust wdDecoRect
-            x = fi $ ev_x_root - fi dx
-            y = fi $ ev_y_root - fi dy
-            button = fi ev_button
-        dealtWith <- handleDecorationClick ds theme decoRect (map wpRectangle wdWidgets) wdOrigWindow x y button
-        unless dealtWith $ when (isDraggingEnabled theme button) $
-            mouseDrag (\dragX dragY -> focus wdOrigWindow >> decorationWhileDraggingHook ds ev_x_root ev_y_root (wdOrigWindow, wdOrigWinRect) dragX dragY)
-                      (decorationAfterDraggingHook ds (wdOrigWindow, wdOrigWinRect) ev_window)
-handleMouseFocusDrag _ _ _ _ _ = return ()
+handleMouseFocusDrag _ _ _ _ _ =
+    warnUnimplemented "DecorationEx.handleMouseFocusDrag"
+      (  "Clicking a decoration does nothing: river reports button presses "
+      ++ "against windows, and a decoration is a surface the window manager "
+      ++ "draws rather than a window river knows about.")
 
--- | Given a window and the state, if a matching decoration is in the
--- state return it with its ('Maybe') 'Rectangle'.
-findDecoDataByDecoWindow :: Window -> [WindowDecoration] -> Maybe WindowDecoration
-findDecoDataByDecoWindow decoWin = find (\dd -> wdDecoWindow dd == Just decoWin)
+-- Upstream also has findDecoDataByDecoWindow, which answers "which decoration
+-- is this window?".  Its only caller was 'handleMouseFocusDrag', which no
+-- longer has a click to look up.
 
 decorationHandler :: forall engine widget a.
                      (DecorationEngine engine widget a,
@@ -468,12 +470,17 @@ paintDecorationSimple :: forall engine shrinker widget.
                        -> X ()
 paintDecorationSimple deco win windowWidth windowHeight shrinker dd isExpose = do
     dpy <- asks display
+    shm <- asks riverShm
     let widgets = widgetLayout $ ddWidgets dd
         style = ddStyle dd
-    pixmap  <- io $ createPixmap dpy win windowWidth windowHeight (defaultDepthOfScreen $ defaultScreenOfDisplay dpy)
-    gc <- io $ createGC dpy pixmap
-    -- draw
-    io $ setGraphicsExposures dpy gc False
+    -- No depth and no drawable to match it against: there is one pixel format
+    -- here, ARGB32.  No setGraphicsExposures either -- that suppressed an X
+    -- event that does not exist.  The compose-then-copy shape is kept as it
+    -- was, and costs nothing: a pixmap is a list of drawing operations and
+    -- copying it appends that list, so there is no offscreen buffer and no
+    -- blit.  See "XMonad.Util.River.Compat".
+    pixmap  <- io $ createPixmap windowWidth windowHeight
+    gc <- io createGC
     bgColor <- stringToPixel dpy (sBgColor style)
     -- we start with the border
     let borderWidth = sDecoBorderWidth style
@@ -485,27 +492,24 @@ paintDecorationSimple deco win windowWidth windowHeight shrinker dd isExpose = d
       drawLineWith dpy pixmap gc (fi (windowWidth - borderWidth)) 0 borderWidth windowHeight (bxRight borderColors)
 
     -- and now again
-    io $ setForeground dpy gc bgColor
-    io $ fillRectangle dpy pixmap gc (fi borderWidth) (fi borderWidth) (windowWidth - (borderWidth * 2)) (windowHeight - (borderWidth * 2))
+    io $ setForeground gc bgColor
+    io $ fillRectangle pixmap gc (fi borderWidth) (fi borderWidth) (windowWidth - (borderWidth * 2)) (windowHeight - (borderWidth * 2))
 
     -- paint strings
     forM_ (zip widgets $ widgetLayout $ ddWidgetPlaces dd) $ \(widget, place) ->
         paintWidget deco (dpy, pixmap, gc) place shrinker dd widget isExpose
 
-    -- debug
-    -- black <- stringToPixel dpy "black"
-    -- io $ setForeground dpy gc black
-    -- forM_ (ddWidgetPlaces dd) $ \(WidgetPlace {wpRectangle = Rectangle x y w h}) ->
-    --   io $ drawRectangle dpy pixmap gc x y w h
-
     -- copy the pixmap over the window
-    io $ copyArea      dpy pixmap win gc 0 0 windowWidth windowHeight 0 0
+    io $ copyArea      pixmap win 0 0
     -- free the pixmap and GC
-    io $ freePixmap    dpy pixmap
-    io $ freeGC        dpy gc
+    io $ freePixmap    pixmap
+    io $ freeGC        gc
+    -- Present it.  X11 flushed on the next round trip; a surface shows nothing
+    -- until its buffer is committed.
+    mapM_ (\sh -> io (commitDrawable dpy sh win)) shm
   where
     drawLineWith dpy pixmap gc x y w h colorName = do
       color <- stringToPixel dpy colorName
-      io $ setForeground dpy gc color
-      io $ fillRectangle dpy pixmap gc x y w h
+      io $ setForeground gc color
+      io $ fillRectangle pixmap gc x y w h
 

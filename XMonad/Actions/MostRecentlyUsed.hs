@@ -49,12 +49,11 @@ import qualified Data.Map.Strict as M
 -- xmonad
 import XMonad
   ( Window, KeySym, keyRelease, io, xK_Escape
-  , Event (DestroyWindowEvent, UnmapEvent, ev_send_event, ev_window)
+  , Event (DestroyWindowEvent, ev_window)
   )
 import XMonad.Core
   ( X, XConfig(..), windowset, WorkspaceId, ScreenId
   , ExtensionClass(..), StateExtension(..)
-  , waitingUnmap
   )
 import XMonad.Operations (screenWorkspace)
 import qualified XMonad.StackSet as W
@@ -169,13 +168,21 @@ withMostRecentlyUsed mods tab preview = do
   unless busy $ do
     XS.put wh{ busy = True }
 
-    for_ (nonEmpty $ ledger hist) \ne -> do
-      let home    = case        ne of wl :| _   -> wl
-          options = case cycleS ne of _  :~ wls -> wls
-      concludableSt options mods tab pressHandler (eventHandler home)
+    -- Clearing the re-entry flag has to be the conclusion hook rather than the
+    -- next statement.  River cannot wait for a key: the bindings are installed
+    -- and this returns, so anything written after the call runs *before* the
+    -- keys are pressed -- which would clear the flag immediately and let a
+    -- second invocation start on top of the first.  See
+    -- 'XMonad.Actions.Repeatable.concludableSt'.
+    let done = do XS.modify \ws@WinHist{} -> ws{ busy = False }
+                  logWinHist
 
-    XS.modify \ws@WinHist{} -> ws{ busy = False }
-    logWinHist
+    case nonEmpty (ledger hist) of
+      Nothing -> done
+      Just ne -> do
+        let home    = case        ne of wl :| _   -> wl
+            options = case cycleS ne of _  :~ wls -> wls
+        concludableSt options mods tab pressHandler (eventHandler home) done
  where
   pressHandler t s = pure if
     | s == tab       -> press Next
@@ -213,12 +220,14 @@ logWinHist = do
       XS.put wh{ hist = event (W.focus st) location hist }
 
 winHistEH :: Event -> X All
+-- The X11 version also watched for unmaps, because an X11 client could
+-- withdraw a window without destroying it and xmonad had to tell that apart
+-- from its own unmaps -- which is what the waitingUnmap bookkeeping was for.
+-- River has no such state: a window it has stopped mentioning is gone, and it
+-- says so once.
 winHistEH ev = All True <$ case ev of
-  UnmapEvent{ ev_send_event = synth, ev_window = w } -> do
-    e <- gets (fromMaybe 0 . M.lookup w . waitingUnmap)
-    when (synth || e == 0) (collect w)
-  DestroyWindowEvent{                ev_window = w } -> collect w
-  _                                                  -> pure ()
+  DestroyWindowEvent{ ev_window = w } -> collect w
+  _                                   -> pure ()
   where collect w = XS.modify $ \wh@WinHist{hist} -> wh{ hist = erase w hist }
 
 -- }}}

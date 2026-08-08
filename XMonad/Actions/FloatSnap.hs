@@ -28,7 +28,8 @@ module XMonad.Actions.FloatSnap (
                 ifClick') where
 
 import XMonad
-import XMonad.Prelude (fromJust, isNothing, listToMaybe, sort, when)
+import XMonad.Prelude (fromJust, fromMaybe, isNothing, listToMaybe, sort, when)
+import XMonad.River (moveResizeWindow, pointerPosition)
 import qualified XMonad.StackSet as W
 import qualified Data.Set as S
 
@@ -94,8 +95,14 @@ snapMagicMouseResize
     -> X ()
 snapMagicMouseResize middle collidedist snapdist w = whenX (isClient w) $ withDisplay $ \d ->
   withWindowAttributes d w $ \wa -> do
-    (_, _, _, px, py, _, _, _) <- io $ queryPointer d w
-    let x = (fromIntegral px - wx wa)/ww wa
+    -- The X11 call read the root-relative pair out of queryPointer's eight
+    -- results; river reports that one pair and nothing else.  Without a
+    -- pointer -- no seat, or nothing has moved yet -- there is no corner to
+    -- choose from, so every edge snaps, which is what the middle of the window
+    -- meant anyway.
+    ptr <- pointerPosition
+    let (px, py) = fromMaybe (round (wx wa + ww wa/2), round (wy wa + wh wa/2)) ptr
+        x = (fromIntegral px - wx wa)/ww wa
         y = (fromIntegral py - wy wa)/wh wa
         ml = [L | x <= (0.5 - middle/2)]
         mr = [R | x >  (0.5 + middle/2)]
@@ -129,8 +136,9 @@ snapMagicResize dir collidedist snapdist w = whenX (isClient w) $ withDisplay $ 
         ybegin' = if U `elem` dir then ybegin else wy wa
         yend'   = if D `elem` dir then yend   else wy wa + wh wa
 
-    io $ moveWindow d w (fromIntegral xbegin') (fromIntegral ybegin')
-    io $ resizeWindow d w (fromIntegral $ xend' - xbegin') (fromIntegral $ yend' - ybegin')
+    moveResizeWindow w (Rectangle (fromIntegral xbegin') (fromIntegral ybegin')
+                                  (fromIntegral $ xend' - xbegin')
+                                  (fromIntegral $ yend' - ybegin'))
     float w
     where
         wx = fromIntegral.wa_x
@@ -172,7 +180,8 @@ snapMagicMove collidedist snapdist w = whenX (isClient w) $ withDisplay $ \d ->
     nx <- handleAxis True d wa
     ny <- handleAxis False d wa
 
-    io $ moveWindow d w (fromIntegral nx) (fromIntegral ny)
+    moveResizeWindow w (Rectangle (fromIntegral nx) (fromIntegral ny)
+                                  (wa_width wa) (wa_height wa))
     float w
     where
         handleAxis horiz d wa = do
@@ -221,8 +230,9 @@ doSnapMove horiz rev collidedist w = whenX (isClient w) $ withDisplay $ \d ->
                                                        else f - wdim wa
                                     _ -> wpos wa
 
-    if horiz then io $ moveWindow d w newpos (fromIntegral $ wa_y wa)
-             else io $ moveWindow d w (fromIntegral $ wa_x wa) newpos
+    moveResizeWindow w $ if horiz
+        then Rectangle newpos (wa_y wa) (wa_width wa) (wa_height wa)
+        else Rectangle (wa_x wa) newpos (wa_width wa) (wa_height wa)
     float w
 
     where
@@ -267,8 +277,9 @@ snapResize grow dir collidedist w = whenX (isClient w) $ withDisplay $ \d ->
 
     case mr of
         Nothing -> return ()
-        Just (nx,ny,nw,nh) -> when (nw>0 && nh>0) $ do io $ moveWindow d w (fromIntegral nx) (fromIntegral ny)
-                                                       io $ resizeWindow d w (fromIntegral nw) (fromIntegral nh)
+        Just (nx,ny,nw,nh) -> when (nw>0 && nh>0) $
+            moveResizeWindow w (Rectangle (fromIntegral nx) (fromIntegral ny)
+                                          (fromIntegral nw) (fromIntegral nh))
     float w
     where
         wx = fromIntegral.wa_x

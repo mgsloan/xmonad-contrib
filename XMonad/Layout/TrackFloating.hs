@@ -33,6 +33,7 @@ import XMonad.Prelude
 import XMonad
 import XMonad.Layout.LayoutModifier
 import XMonad.Layout.FocusTracking
+import XMonad.River (windowParent)
 import XMonad.Util.Stack (findZ)
 import qualified XMonad.StackSet as W
 
@@ -54,8 +55,9 @@ data UseTransientFor a = UseTransientFor deriving (Read,Show,Eq)
 instance LayoutModifier UseTransientFor Window where
     modifyLayout _ ws@W.Workspace{ W.stack = ms } r = do
         m <- gets (W.peek . W.view (W.tag ws) . windowset)
-        d <- asks display
-        parent <- join <$> T.traverse (io . getTransientForHint d) m
+        -- WM_TRANSIENT_FOR under the name Wayland gives it; see
+        -- 'XMonad.River.windowParent'.
+        parent <- join <$> T.traverse windowParent m
 
         s0 <- get
         whenJust parent $ \p -> put s0{ windowset = W.focusWindow p (windowset s0) }

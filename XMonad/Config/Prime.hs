@@ -52,8 +52,6 @@ handleEventHook,
 workspaces,
 logHook,
 startupHook,
-clientMask,
-rootMask,
 SummableClass(..),
 
 -- * Attributes you can add to or remove from
@@ -329,20 +327,11 @@ logHook = Summable X.logHook (\x c -> c { X.logHook = x }) (P.>>)
 startupHook :: Summable (X ()) (X ()) (XConfig l)
 startupHook = Summable X.startupHook (\x c -> c { X.startupHook = x }) (P.>>)
 
--- | The client events that xmonad is interested in. This is useful in
--- combination with handleEventHook. Default: @structureNotifyMask .|.
--- enterWindowMask .|. propertyChangeMask@
---
--- >   clientMask =+ keyPressMask .|. keyReleaseMask
-clientMask :: Summable EventMask EventMask (XConfig l)
-clientMask = Summable X.clientMask (\x c -> c { X.clientMask = x }) (.|.)
-
--- | The root events that xmonad is interested in. This is useful in
--- combination with handleEventHook. Default: @substructureRedirectMask .|.
--- substructureNotifyMask .|. enterWindowMask .|. leaveWindowMask .|.
--- structureNotifyMask .|. buttonPressMask@
-rootMask :: Summable EventMask EventMask (XConfig l)
-rootMask = Summable X.rootMask (\x c -> c { X.rootMask = x }) (.|.)
+-- Upstream also offers @clientMask@ and @rootMask@, which add bits to the two
+-- X event masks xmonad selects with.  There is nothing to select here: river
+-- delivers exactly the events its management protocol defines, and 'XConfig'
+-- has no such fields for the same reason.  A config setting one fails to
+-- compile, which is more useful than a mask that is accepted and ignored.
 
 -- $removables
 -- The following support the the @=+@ for adding items and the @=-@ operator

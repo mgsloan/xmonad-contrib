@@ -30,8 +30,7 @@ import qualified XMonad.StackSet                                       as W
 
 import           XMonad.Util.DebugWindow
 
-import           Graphics.X11.Types                  (Window)
-import           Graphics.X11.Xlib.Extras            (Event)
+import           XMonad.Core                         (Event, Window)
 
 import           Data.Map                            (member)
 

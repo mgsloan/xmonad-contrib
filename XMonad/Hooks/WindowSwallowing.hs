@@ -30,12 +30,12 @@
 --   For example, window swallowing will probably not work with your browser.
 --
 -- - To check the process hierarchy, we need to be able to get the process ID
---   by looking at the window. This requires the @_NET_WM_PID@ X-property to be set.
---   If any application you want to use this with does not provide the @_NET_WM_PID@,
---   there is not much you can do except for reaching out to the author of that
---   application and asking them to set that property. Additionally,
---   applications running in their own PID namespace, such as those in
---   Flatpak, can't set a correct @_NET_WM_PID@ even if they wanted to.
+--   by looking at the window. Under X11 that came from the @_NET_WM_PID@
+--   property; here it comes from @river_window_v1.unreliable_pid@, and river's
+--   choice of adjective is fair warning. If an application does not report one,
+--   there is not much you can do except for reaching out to its author.
+--   Additionally, applications running in their own PID namespace, such as
+--   those in Flatpak, can't report a usable pid even if they wanted to.
 -----------------------------------------------------------------------------
 module XMonad.Hooks.WindowSwallowing
   ( -- * Usage
@@ -47,8 +47,8 @@ import           XMonad
 import           XMonad.Prelude
 import qualified XMonad.StackSet               as W
 import           XMonad.Layout.SubLayouts
+import qualified XMonad.Hooks.ManageHelpers    as MH
 import qualified XMonad.Util.ExtensibleState   as XS
-import           XMonad.Util.WindowProperties
 import           XMonad.Util.Process            ( getPPIDChain )
 import qualified Data.Map.Strict               as M
 import           System.Posix.Types             ( ProcessID )
@@ -84,11 +84,15 @@ handleMapRequestEvent parentQ childQ childWindow action =
     parentMatches <- runQuery parentQ parentWindow
     childMatches  <- runQuery childQ childWindow
     when (parentMatches && childMatches) $ do
-      -- read the windows _NET_WM_PID properties
-      childWindowPid  <- getProp32s "_NET_WM_PID" childWindow
-      parentWindowPid <- getProp32s "_NET_WM_PID" parentWindow
+      -- Ask each window for its client's process.  X11 kept that in a
+      -- _NET_WM_PID property; river reports it as unreliable_pid, which
+      -- "XMonad.Hooks.ManageHelpers" exposes as 'MH.pid'.  River's name for it
+      -- is a warning worth repeating -- a client may lie or be proxied -- but
+      -- _NET_WM_PID was no better, and this module was always trusting it.
+      childWindowPid  <- runQuery MH.pid childWindow
+      parentWindowPid <- runQuery MH.pid parentWindow
       case (parentWindowPid, childWindowPid) of
-        (Just (parentPid : _), Just (childPid : _)) -> do
+        (Just parentPid, Just childPid) -> do
           -- check if the new window is a child process of the last focused window
           -- using the process ids.
           isChild <- liftIO $ fi childPid `isChildOf` fi parentPid
@@ -108,9 +112,14 @@ swallowEventHookSub
   -> X All
 swallowEventHookSub parentQ childQ event =
   All True <$ case event of
-    MapRequestEvent{ev_window=childWindow} ->
-      handleMapRequestEvent parentQ childQ childWindow $ \parentWindow -> do
-        manage childWindow
+    -- X11's MapRequestEvent is a client asking to be mapped, which the window
+    -- manager had to grant.  River grants it itself and tells the window
+    -- manager the window exists, which is the same moment.
+    WindowAdded{ev_window=childWindow} ->
+      handleMapRequestEvent parentQ childQ childWindow $ \parentWindow ->
+        -- No `manage childWindow` first: river adopts a window into the
+        -- WindowSet itself before this event is delivered, where X11 left that
+        -- to the window manager's map-request handler.
         sendMessage (Merge parentWindow childWindow)
     _ -> pure ()
 
@@ -125,7 +134,7 @@ swallowEventHook
   -> X All
 swallowEventHook parentQ childQ event = do
   case event of
-    MapRequestEvent{ev_window=childWindow} ->
+    WindowAdded{ev_window=childWindow} ->
       handleMapRequestEvent parentQ childQ childWindow $ \parentWindow -> do
         -- We set the newly opened window as the focused window, replacing the parent window.
         -- If the parent window was floating, we transfer that data to the child,
@@ -136,19 +145,16 @@ swallowEventHook parentQ childQ event = do
           )
         XS.modify (addSwallowedParent parentWindow childWindow)
 
-    -- This is called in many circumstances, most notably for us:
-    -- right before a window gets closed. We store the current
-    -- state of the window stack here, such that we know where the
-    -- child window was on the screen when restoring the swallowed parent process.
-    ConfigureEvent{} -> withWindowSet $ \ws -> do
-      XS.modify . setStackBeforeWindowClosing . currentStack $ ws
-      XS.modify . setFloatingBeforeWindowClosing . W.floating $ ws
-
-    -- This is called right after any window closes.
-    DestroyWindowEvent { ev_event = eventId, ev_window = childWindow } ->
-      -- Because DestroyWindowEvent is emitted a lot more often then you think,
-      -- this check verifies that the event is /actually/ about closing a window.
-      when (eventId == childWindow) $ do
+    -- Upstream snapshots the stack in a separate ConfigureEvent branch,
+    -- because X11 sends one just before a window closes and DestroyNotify
+    -- arrives after xmonad has already forgotten the window.  River sends one
+    -- event, and sends it while the window is still in the windowset, so the
+    -- snapshot is taken here -- before anything below touches the stack --
+    -- rather than in an earlier event that no longer exists.
+    DestroyWindowEvent { ev_window = childWindow } -> do
+        withWindowSet $ \ws -> do
+          XS.modify . setStackBeforeWindowClosing . currentStack $ ws
+          XS.modify . setFloatingBeforeWindowClosing . W.floating $ ws
         -- we get some data from the extensible state, most notably we ask for
         -- the \"parent\" window of the now closed window.
         maybeSwallowedParent <- XS.gets (getSwallowedParent childWindow)

@@ -1,4 +1,4 @@
-{-# LANGUAGE ScopedTypeVariables, GeneralizedNewtypeDeriving, FlexibleInstances, TupleSections #-}
+{-# LANGUAGE ScopedTypeVariables, GeneralizedNewtypeDeriving, FlexibleInstances, TupleSections, LambdaCase #-}
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  XMonad.Actions.GridSelect
@@ -52,7 +52,7 @@ module XMonad.Actions.GridSelect (
 
     -- * Navigation Mode assembly
     TwoD,
-    makeXEventhandler,
+    Navigation(..),
     shadowWithKeymap,
 
     -- * Built-in Navigation Mode
@@ -81,15 +81,21 @@ module XMonad.Actions.GridSelect (
     TwoDState,
     ) where
 import Control.Arrow ((***))
-import Data.Bits
 import Data.Ord (comparing)
 import Control.Monad.State
 import Data.List as L
 import qualified Data.Map as M
+import Data.IORef
 import XMonad hiding (liftX)
 import XMonad.Prelude
 import XMonad.Util.Font
-import XMonad.Prompt (mkUnmanagedWindow)
+import XMonad.River (postAction)
+import XMonad.River.Client (Anchor (AnchorCentre), ClientHandle (..),
+                            ClientSpec (..), startClient)
+import XMonad.Util.River.Compat (Drawable, GC, createGC, createPixmap,
+                                 drawRectangle, fillRectangle, freeGC,
+                                 freePixmap, renderDrawableInto, setBackground,
+                                 setForeground)
 import XMonad.StackSet as W
 import XMonad.Layout.Decoration
 import XMonad.Util.NamedWindows
@@ -149,29 +155,37 @@ import qualified Data.List.NonEmpty as NE
 -- $keybindings
 --
 -- You can build you own navigation mode and submodes by combining the
--- exported action ingredients and assembling them using 'makeXEventhandler' and 'shadowWithKeymap'.
+-- exported action ingredients and assembling them using 'shadowWithKeymap'.
 --
--- > myNavigation :: TwoD a (Maybe a)
--- > myNavigation = makeXEventhandler $ shadowWithKeymap navKeyMap navDefaultHandler
+-- > myNavigation :: (KeySym, String, KeyMask) -> TwoD a (Navigation a)
+-- > myNavigation = shadowWithKeymap navKeyMap navDefaultHandler
 -- >  where navKeyMap = M.fromList [
 -- >           ((0,xK_Escape), cancel)
 -- >          ,((0,xK_Return), select)
--- >          ,((0,xK_slash) , substringSearch myNavigation)
--- >          ,((0,xK_Left)  , move (-1,0)  >> myNavigation)
--- >          ,((0,xK_h)     , move (-1,0)  >> myNavigation)
--- >          ,((0,xK_Right) , move (1,0)   >> myNavigation)
--- >          ,((0,xK_l)     , move (1,0)   >> myNavigation)
--- >          ,((0,xK_Down)  , move (0,1)   >> myNavigation)
--- >          ,((0,xK_j)     , move (0,1)   >> myNavigation)
--- >          ,((0,xK_Up)    , move (0,-1)  >> myNavigation)
--- >          ,((0,xK_y)     , move (-1,-1) >> myNavigation)
--- >          ,((0,xK_i)     , move (1,-1)  >> myNavigation)
--- >          ,((0,xK_n)     , move (-1,1)  >> myNavigation)
--- >          ,((0,xK_m)     , move (1,-1)  >> myNavigation)
--- >          ,((0,xK_space) , setPos (0,0) >> myNavigation)
+-- >          ,((0,xK_Left)  , move (-1,0)  >> pure Continue)
+-- >          ,((0,xK_h)     , move (-1,0)  >> pure Continue)
+-- >          ,((0,xK_Right) , move (1,0)   >> pure Continue)
+-- >          ,((0,xK_l)     , move (1,0)   >> pure Continue)
+-- >          ,((0,xK_Down)  , move (0,1)   >> pure Continue)
+-- >          ,((0,xK_j)     , move (0,1)   >> pure Continue)
+-- >          ,((0,xK_Up)    , move (0,-1)  >> pure Continue)
+-- >          ,((0,xK_y)     , move (-1,-1) >> pure Continue)
+-- >          ,((0,xK_i)     , move (1,-1)  >> pure Continue)
+-- >          ,((0,xK_n)     , move (-1,1)  >> pure Continue)
+-- >          ,((0,xK_m)     , move (1,-1)  >> pure Continue)
+-- >          ,((0,xK_space) , setPos (0,0) >> pure Continue)
 -- >          ]
 -- >        -- The navigation handler ignores unknown key symbols
--- >        navDefaultHandler = const myNavigation
+-- >        navDefaultHandler = const (pure Continue)
+--
+-- Upstream, each entry ends by recursing into @myNavigation@ and the whole
+-- thing is wrapped in @makeXEventhandler@, because there the navigation /is/
+-- the event loop. Here the backend calls it once per key, so an entry says
+-- what to do and then says whether to carry on. Converting a navigation
+-- written for upstream is that substitution and nothing else -- except that
+-- @substringSearch@ is entered by the built-in navigations rather than by
+-- calling it directly, since a submode is now state rather than a nested
+-- loop.
 --
 -- You can then define @gsconfig3@ which may be used in exactly the same manner as @gsconfig1@:
 --
@@ -202,15 +216,40 @@ data GSConfig a = GSConfig {
       gs_cellpadding :: Integer,
       gs_colorizer :: a -> Bool -> X (String, String),
       gs_font :: String,
-      gs_navigate :: TwoD a (Maybe a),
-      -- ^ Customize key bindings for a GridSelect
+      gs_navigate :: (KeySym, String, KeyMask) -> TwoD a (Navigation a),
+      -- ^ Customize key bindings for a GridSelect.
+      --
+      -- Upstream this is @TwoD a (Maybe a)@ -- the whole event loop, supplied
+      -- by the config, each keymap entry ending by recursing into it.  It
+      -- cannot be a loop here: nothing may block the window manager's thread,
+      -- and a key cannot even arrive until the action that opened the grid has
+      -- returned.  So this is the handler for /one/ key, and it says whether
+      -- to carry on; see 'Navigation'.  Converting a custom navigation is
+      -- mechanical -- drop the @>> myNavigation@ tail from each entry and end
+      -- it @>> pure Continue@ instead.
       gs_rearranger :: Rearranger a,
       gs_originFractX :: Double,
       gs_originFractY :: Double,
-      gs_bordercolor :: String,
-      gs_cancelOnEmptyClick :: Bool
-      -- ^ When True, click on empty space will cancel GridSelect
+      gs_bordercolor :: String
+      -- Upstream also has gs_cancelOnEmptyClick, for a click that lands on no
+      -- cell.  There are no clicks: the grid is a layer surface the window
+      -- manager drew, and river reports button presses against windows it
+      -- manages, so it attributes a click on the grid to nothing.  The field
+      -- is gone rather than ignored -- see XMonad.Layout.Decoration's
+      -- handleMouseFocusDrag, which is the same wall.
 }
+
+-- | What a key handler says should happen next.
+--
+-- Upstream says this with @Maybe a@ returned from a loop: returning at all
+-- ends the grid, @Just@ selects and @Nothing@ cancels, and "keep going" is
+-- expressed by not returning -- by recursing into the loop instead.  With the
+-- loop inverted there is no recursion to stand for it, so it gets a
+-- constructor.
+data Navigation a
+    = Continue    -- ^ Stay open and wait for the next key.
+    | Cancel      -- ^ Close, selecting nothing.
+    | Select a    -- ^ Close, selecting this element.
 
 -- | That is 'fromClassName' if you are selecting a 'Window', or
 -- 'defaultColorizer' if you are selecting a 'String'. The catch-all instance
@@ -244,8 +283,22 @@ data TwoDState a = TwoDState { td_curpos :: TwoDPosition
                              , td_font :: XMonadFont
                              , td_paneX :: Integer
                              , td_paneY :: Integer
-                             , td_drawingWin :: Window
+                             , td_frame :: Drawable
+                               -- ^ The offscreen drawable the grid is composed
+                               -- in, replayed into the client's buffer on
+                               -- every redraw.  Upstream draws straight onto
+                               -- an override-redirect window; a surface here
+                               -- belongs to a client on its own connection,
+                               -- and this is where the two meet.  Same
+                               -- arrangement "XMonad.Prompt" uses.
+                             , td_gc :: GC
                              , td_searchString :: String
+                             , td_searching :: Bool
+                               -- ^ Whether the substring-search submode is
+                               -- active.  Upstream expresses the submode by
+                               -- being inside a second, nested event loop;
+                               -- with one handler per key there is no nesting
+                               -- to be inside, so the mode is state.
                              , td_elementmap :: TwoDElementMap a
                              }
 
@@ -294,9 +347,6 @@ newtype TwoD a b = TwoD { unTwoD :: StateT (TwoDState a) X b }
 liftX ::  X a1 -> TwoD a a1
 liftX = TwoD . lift
 
-evalTwoD ::  TwoD a1 a -> TwoDState a1 -> X a
-evalTwoD m s = flip evalStateT s $ unTwoD m
-
 diamondLayer :: (Enum a, Num a, Eq a) => a -> [(a, a)]
 diamondLayer 0 = [(0,0)]
 diamondLayer n =
@@ -318,20 +368,27 @@ diamondRestrict x y originX originY =
 findInElementMap :: (Eq a) => a -> [(a, b)] -> Maybe (a, b)
 findInElementMap pos = find ((== pos) . fst)
 
-drawWinBox :: Window -> XMonadFont -> (String, String) -> String -> Integer -> Integer -> String -> Integer -> Integer -> Integer -> X ()
+-- | Draw one cell into the offscreen frame.
+--
+-- No 'withDisplay': "XMonad.Util.River.Compat" takes no @Display@, because
+-- there is no server to send to -- an operation is recorded against the
+-- drawable and replayed when the frame is presented.  'initColor' is gone with
+-- the colormap it allocated against; 'stringToPixel' answers the same
+-- question, which is all any caller ever wanted from it.
+drawWinBox :: Drawable -> XMonadFont -> (String, String) -> String -> Integer -> Integer -> String -> Integer -> Integer -> Integer -> X ()
 drawWinBox win font (fg,bg) bc ch cw text x y cp =
   withDisplay $ \dpy -> do
-  gc <- liftIO $ createGC dpy win
-  bordergc <- liftIO $ createGC dpy win
-  liftIO $ do
-    Just fgcolor <- initColor dpy fg
-    Just bgcolor <- initColor dpy bg
-    Just bordercolor <- initColor dpy bc
-    setForeground dpy gc fgcolor
-    setBackground dpy gc bgcolor
-    setForeground dpy bordergc bordercolor
-    fillRectangle dpy win gc (fromInteger x) (fromInteger y) (fromInteger cw) (fromInteger ch)
-    drawRectangle dpy win bordergc (fromInteger x) (fromInteger y) (fromInteger cw) (fromInteger ch)
+  gc <- io createGC
+  bordergc <- io createGC
+  fgcolor <- stringToPixel dpy fg
+  bgcolor <- stringToPixel dpy bg
+  bordercolor <- stringToPixel dpy bc
+  io $ do
+    setForeground gc fgcolor
+    setBackground gc bgcolor
+    setForeground bordergc bordercolor
+    fillRectangle win gc (fromInteger x) (fromInteger y) (fromInteger cw) (fromInteger ch)
+    drawRectangle win bordergc (fromInteger x) (fromInteger y) (fromInteger cw) (fromInteger ch)
   stext <- shrinkWhile (shrinkIt shrinkText)
            (\n -> do size <- liftIO $ textWidthXMF dpy font n
                      return $ size > fromInteger (cw-(2*cp)))
@@ -340,8 +397,8 @@ drawWinBox win font (fg,bg) bc ch cw text x y cp =
   (asc,desc) <- liftIO $ textExtentsXMF font stext
   let offset = ((ch - fromIntegral (asc + desc)) `div` 2) + fromIntegral asc
   printStringXMF dpy win font gc bg fg (fromInteger (x+cp)) (fromInteger (y+offset)) stext
-  liftIO $ freeGC dpy gc
-  liftIO $ freeGC dpy bordergc
+  io $ freeGC gc
+  io $ freeGC bordergc
 
 updateAllElements :: TwoD a ()
 updateAllElements =
@@ -364,7 +421,7 @@ updateElements elementmap = do
 updateElementsWithColorizer :: (a -> Bool -> X (String, String)) -> TwoDElementMap a -> TwoD a ()
 updateElementsWithColorizer colorizer elementmap = do
     TwoDState { td_curpos = curpos,
-                td_drawingWin = win,
+                td_frame = win,
                 td_gsconfig = gsconfig,
                 td_font = font,
                 td_paneX = paneX,
@@ -386,45 +443,24 @@ updateElementsWithColorizer colorizer elementmap = do
                        (gs_cellpadding gsconfig)
     mapM_ updateElement elementmap
 
-stdHandle :: Event -> TwoD a (Maybe a) -> TwoD a (Maybe a)
-stdHandle ButtonEvent{ ev_event_type = t, ev_x = x, ev_y = y } contEventloop
-    | t == buttonRelease = do
-        s@TwoDState{ td_paneX = px
-                   , td_paneY = py
-                   , td_gsconfig = GSConfig{ gs_cellheight = ch
-                                           , gs_cellwidth = cw
-                                           , gs_cancelOnEmptyClick = cancelOnEmptyClick
-                                           }
-                   } <- get
-        let gridX = (fi x - (px - cw) `div` 2) `div` cw
-            gridY = (fi y - (py - ch) `div` 2) `div` ch
-        case lookup (gridX,gridY) (td_elementmap s) of
-             Just (_,el) -> return (Just el)
-             Nothing     -> if cancelOnEmptyClick
-                            then return Nothing
-                            else contEventloop
-    | otherwise = contEventloop
-
-stdHandle ExposeEvent{} contEventloop = updateAllElements >> contEventloop
-
-stdHandle _ contEventloop = contEventloop
-
--- | Embeds a key handler into the X event handler that dispatches key
--- events to the key handler, while non-key event go to the standard
--- handler.
-makeXEventhandler :: ((KeySym, String, KeyMask) -> TwoD a (Maybe a)) -> TwoD a (Maybe a)
-makeXEventhandler keyhandler = fix $ \me -> join $ liftX $ withDisplay $ \d -> liftIO $ allocaXEvent $ \e -> do
-                             maskEvent d (exposureMask .|. keyPressMask .|. buttonReleaseMask) e
-                             ev <- getEvent e
-                             if ev_event_type ev == keyPress
-                               then do
-                                  (_, s) <- lookupString $ asKeyEvent e
-                                  ks <- keycodeToKeysym d (ev_keycode ev) 0
-                                  return $ do
-                                      mask <- liftX $ cleanKeyMask <*> pure (ev_state ev)
-                                      keyhandler (ks, s, mask)
-                               else
-                                  return $ stdHandle ev me
+-- $noevents
+--
+-- Upstream has a @stdHandle@ for the events that are not keys, and a
+-- @makeXEventhandler@ that blocks in @maskEvent@ and dispatches between the
+-- two.  Neither survives, and neither is missed:
+--
+-- * @ExposeEvent@ told the window manager to repaint. A Wayland compositor
+--   owns damage and repaint; the frame is presented when it is drawn and
+--   nobody asks for it back.
+--
+-- * @ButtonEvent@ selected a cell by clicking it. River reports button
+--   presses against windows it manages, and the grid is a surface the window
+--   manager drew, so it has no window to attribute a click to. Same wall as
+--   'XMonad.Layout.Decoration.handleMouseFocusDrag'.
+--
+-- * @makeXEventhandler@ was the loop. It cannot block here -- this is the
+--   thread that would have to deliver the keys -- so 'gs_navigate' is called
+--   once per key instead, from the client's callback.
 
 -- | When the map contains (KeySym,KeyMask) tuple for the given event,
 -- the associated action in the map associated shadows the default key
@@ -434,15 +470,19 @@ shadowWithKeymap keymap dflt keyEvent@(ks,_,m') = fromMaybe (dflt keyEvent) (M.l
 
 -- Helper functions to use for key handler functions
 
--- | Closes gridselect returning the element under the cursor
-select :: TwoD a (Maybe a)
+-- | Closes gridselect returning the element under the cursor.
+--
+-- With nothing under the cursor this cancels, which is what returning
+-- @Nothing@ meant upstream.
+select :: TwoD a (Navigation a)
 select = do
   s <- get
-  return $ snd . snd <$> findInElementMap (td_curpos s) (td_elementmap s)
+  return $ maybe Cancel (Select . snd . snd)
+         $ findInElementMap (td_curpos s) (td_elementmap s)
 
 -- | Closes gridselect returning no element.
-cancel :: TwoD a (Maybe a)
-cancel = return Nothing
+cancel :: TwoD a (Navigation a)
+cancel = return Cancel
 
 -- | Sets the absolute position of the cursor.
 setPos :: (Integer, Integer) -> TwoD a ()
@@ -517,62 +557,77 @@ transformSearchString f = do
 -- via Return, while Escape cancels the search. If you want that
 -- navigation style, add 'defaultNavigation' as 'gs_navigate' to your
 -- 'GSConfig' object. This is done by 'buildDefaultGSConfig' automatically.
-defaultNavigation :: TwoD a (Maybe a)
-defaultNavigation = makeXEventhandler $ shadowWithKeymap navKeyMap navDefaultHandler
+defaultNavigation :: (KeySym, String, KeyMask) -> TwoD a (Navigation a)
+defaultNavigation stroke = do
+  searching <- gets td_searching
+  if searching then substringSearch stroke
+               else shadowWithKeymap navKeyMap navDefaultHandler stroke
   where navKeyMap = M.fromList [
            ((0,xK_Escape)     , cancel)
           ,((0,xK_Return)     , select)
-          ,((0,xK_slash)      , substringSearch defaultNavigation)
-          ,((0,xK_Left)       , move (-1,0) >> defaultNavigation)
-          ,((0,xK_h)          , move (-1,0) >> defaultNavigation)
-          ,((0,xK_Right)      , move (1,0) >> defaultNavigation)
-          ,((0,xK_l)          , move (1,0) >> defaultNavigation)
-          ,((0,xK_Down)       , move (0,1) >> defaultNavigation)
-          ,((0,xK_j)          , move (0,1) >> defaultNavigation)
-          ,((0,xK_Up)         , move (0,-1) >> defaultNavigation)
-          ,((0,xK_k)          , move (0,-1) >> defaultNavigation)
-          ,((0,xK_Tab)        , moveNext >> defaultNavigation)
-          ,((0,xK_n)          , moveNext >> defaultNavigation)
-          ,((shiftMask,xK_Tab), movePrev >> defaultNavigation)
-          ,((0,xK_p)          , movePrev >> defaultNavigation)
+          ,((0,xK_slash)      , enterSearch)
+          ,((0,xK_Left)       , move (-1,0) >> pure Continue)
+          ,((0,xK_h)          , move (-1,0) >> pure Continue)
+          ,((0,xK_Right)      , move (1,0) >> pure Continue)
+          ,((0,xK_l)          , move (1,0) >> pure Continue)
+          ,((0,xK_Down)       , move (0,1) >> pure Continue)
+          ,((0,xK_j)          , move (0,1) >> pure Continue)
+          ,((0,xK_Up)         , move (0,-1) >> pure Continue)
+          ,((0,xK_k)          , move (0,-1) >> pure Continue)
+          ,((0,xK_Tab)        , moveNext >> pure Continue)
+          ,((0,xK_n)          , moveNext >> pure Continue)
+          ,((0,xK_p)          , movePrev >> pure Continue)
           ]
         -- The navigation handler ignores unknown key symbols, therefore we const
-        navDefaultHandler = const defaultNavigation
+        navDefaultHandler = const (pure Continue)
 
 -- | This navigation style combines navigation and search into one mode at the cost of losing vi style
 -- navigation. With this style, there is no substring search submode,
 -- but every typed character is added to the substring search.
-navNSearch :: TwoD a (Maybe a)
-navNSearch = makeXEventhandler $ shadowWithKeymap navNSearchKeyMap navNSearchDefaultHandler
+navNSearch :: (KeySym, String, KeyMask) -> TwoD a (Navigation a)
+navNSearch = shadowWithKeymap navNSearchKeyMap navNSearchDefaultHandler
   where navNSearchKeyMap = M.fromList [
            ((0,xK_Escape)     , cancel)
           ,((0,xK_Return)     , select)
-          ,((0,xK_Left)       , move (-1,0) >> navNSearch)
-          ,((0,xK_Right)      , move (1,0) >> navNSearch)
-          ,((0,xK_Down)       , move (0,1) >> navNSearch)
-          ,((0,xK_Up)         , move (0,-1) >> navNSearch)
-          ,((0,xK_Tab)        , moveNext >> navNSearch)
-          ,((shiftMask,xK_Tab), movePrev >> navNSearch)
-          ,((0,xK_BackSpace), transformSearchString (\s -> if s == "" then "" else init s) >> navNSearch)
+          ,((0,xK_Left)       , move (-1,0) >> pure Continue)
+          ,((0,xK_Right)      , move (1,0) >> pure Continue)
+          ,((0,xK_Down)       , move (0,1) >> pure Continue)
+          ,((0,xK_Up)         , move (0,-1) >> pure Continue)
+          ,((0,xK_Tab)        , moveNext >> pure Continue)
+          ,((0,xK_BackSpace)  , transformSearchString (\s -> if s == "" then "" else init s) >> pure Continue)
           ]
         -- The navigation handler ignores unknown key symbols, therefore we const
         navNSearchDefaultHandler (_,s,_) = do
           transformSearchString (++ s)
-          navNSearch
+          pure Continue
+
+-- | Enter the substring-search submode.
+enterSearch :: TwoD a (Navigation a)
+enterSearch = do
+  XMonad.modify $ \s -> s { td_searching = True }
+  pure Continue
 
 -- | Navigation submode used for substring search. It returns to the
--- first argument navigation style when the user hits Return.
-substringSearch :: TwoD a (Maybe a) -> TwoD a (Maybe a)
-substringSearch returnNavigation = fix $ \me ->
-  let searchKeyMap = M.fromList [
-           ((0,xK_Escape)   , transformSearchString (const "") >> returnNavigation)
-          ,((0,xK_Return)   , returnNavigation)
-          ,((0,xK_BackSpace), transformSearchString (\s -> if s == "" then "" else init s) >> me)
+-- surrounding navigation style when the user hits Return.
+--
+-- Upstream this takes the navigation to return to and nests a second event
+-- loop inside the first, leaving it by returning. There is no nesting here --
+-- one handler runs per key, and it has already returned by the time the next
+-- arrives -- so entering and leaving the submode set and clear
+-- 'td_searching', which the top-level dispatch consults.
+substringSearch :: (KeySym, String, KeyMask) -> TwoD a (Navigation a)
+substringSearch = shadowWithKeymap searchKeyMap searchDefaultHandler
+  where searchKeyMap = M.fromList [
+           ((0,xK_Escape)   , transformSearchString (const "") >> leaveSearch)
+          ,((0,xK_Return)   , leaveSearch)
+          ,((0,xK_BackSpace), transformSearchString (\s -> if s == "" then "" else init s) >> pure Continue)
           ]
-      searchDefaultHandler (_,s,_) = do
+        searchDefaultHandler (_,s,_) = do
           transformSearchString (++ s)
-          me
-  in makeXEventhandler $ shadowWithKeymap searchKeyMap searchDefaultHandler
+          pure Continue
+        leaveSearch = do
+          XMonad.modify $ \s -> s { td_searching = False }
+          pure Continue
 
 
 -- FIXME probably move that into Utils?
@@ -646,63 +701,114 @@ stringToRatio s = let gen = mkStdGen $ foldl' (\t c -> t * 31 + fromEnum c) 0 s
                   in fst $ randomR (0, 1) gen
 
 -- | Brings up a 2D grid of elements in the center of the screen, and one can
--- select an element with cursors keys. The selected element is returned.
-gridselect :: GSConfig a -> [(String,a)] -> X (Maybe a)
-gridselect _ [] = return Nothing
-gridselect gsconfig elements =
- withDisplay $ \dpy -> do
-    rootw <- asks theRoot
+-- select an element with cursors keys. The selection is handed to the given
+-- function once the user has made it, or 'Nothing' if they cancelled.
+--
+-- Upstream this answers @X (Maybe a)@, having run the grid to completion
+-- before returning. It cannot here, for the reason set out on 'gs_navigate':
+-- the grid takes the keyboard through a layer surface on its own connection,
+-- and this thread is the one that has to keep servicing that connection. So
+-- the answer is handed forward instead of back. Every wrapper below --
+-- 'goToSelected', 'spawnSelected', 'runSelectedAction' and the rest -- already
+-- ended in @X ()@ and consumed the result immediately, so their signatures are
+-- unchanged.
+gridselect :: GSConfig a -> [(String,a)] -> (Maybe a -> X ()) -> X ()
+gridselect _ [] cont = cont Nothing
+gridselect gsconfig elements cont = do
+    xconf <- ask
     scr <- gets $ screenRect . W.screenDetail . W.current . windowset
-    win <- liftIO $ mkUnmanagedWindow dpy (defaultScreenOfDisplay dpy) rootw
-                    (rect_x scr) (rect_y scr) (rect_width scr) (rect_height scr)
-    liftIO $ mapWindow dpy win
-    liftIO $ selectInput dpy win (exposureMask .|. keyPressMask .|. buttonReleaseMask)
-    status <- io $ grabKeyboard dpy win True grabModeAsync grabModeAsync currentTime
-    void $ io $ grabPointer dpy win True buttonReleaseMask grabModeAsync grabModeAsync none none currentTime
     font <- initXMF (gs_font gsconfig)
     let screenWidth = toInteger $ rect_width scr
         screenHeight = toInteger $ rect_height scr
-    selectedElement <- if status == grabSuccess then do
-                            let restriction ss cs = (fromInteger ss/fromInteger (cs gsconfig)-1)/2 :: Double
-                                restrictX = floor $ restriction screenWidth gs_cellwidth
-                                restrictY = floor $ restriction screenHeight gs_cellheight
-                                originPosX = floor $ (gs_originFractX gsconfig - (1/2)) * 2 * fromIntegral restrictX
-                                originPosY = floor $ (gs_originFractY gsconfig - (1/2)) * 2 * fromIntegral restrictY
-                                coords = diamondRestrict restrictX restrictY originPosX originPosY
-                                s = TwoDState { td_curpos = NE.head (notEmpty coords),
-                                                td_availSlots = coords,
-                                                td_elements = elements,
-                                                td_gsconfig = gsconfig,
-                                                td_font = font,
-                                                td_paneX = screenWidth,
-                                                td_paneY = screenHeight,
-                                                td_drawingWin = win,
-                                                td_searchString = "",
-                                                td_elementmap = [] }
-                            m <- generateElementmap s
-                            evalTwoD (updateAllElements >> gs_navigate gsconfig)
-                                     (s { td_elementmap = m })
-                      else
-                          return Nothing
-    liftIO $ do
-      unmapWindow dpy win
-      destroyWindow dpy win
-      ungrabPointer dpy currentTime
-      sync dpy False
-    releaseXMF font
-    return selectedElement
+
+    -- The grid is composed in an offscreen drawable and replayed into whatever
+    -- buffer the client presents, exactly as a prompt does it.  Drawing and
+    -- presenting are on different threads and this drawable is where they meet.
+    frame <- io $ createPixmap (rect_width scr) (rect_height scr)
+    gc <- io createGC
+
+    let restriction ss cs = (fromInteger ss/fromInteger (cs gsconfig)-1)/2 :: Double
+        restrictX = floor $ restriction screenWidth gs_cellwidth
+        restrictY = floor $ restriction screenHeight gs_cellheight
+        originPosX = floor $ (gs_originFractX gsconfig - (1/2)) * 2 * fromIntegral restrictX
+        originPosY = floor $ (gs_originFractY gsconfig - (1/2)) * 2 * fromIntegral restrictY
+        coords = diamondRestrict restrictX restrictY originPosX originPosY
+        s = TwoDState { td_curpos = NE.head (notEmpty coords),
+                        td_availSlots = coords,
+                        td_elements = elements,
+                        td_gsconfig = gsconfig,
+                        td_font = font,
+                        td_paneX = screenWidth,
+                        td_paneY = screenHeight,
+                        td_frame = frame,
+                        td_gc = gc,
+                        td_searchString = "",
+                        td_searching = False,
+                        td_elementmap = [] }
+    m <- generateElementmap s
+
+    -- The state lives in an IORef rather than being threaded through a loop,
+    -- because there is no loop: each key arrives as a callback on the client's
+    -- thread, which posts an action to the window manager's.  That action is
+    -- the only thing that ever touches this ref, so no locking is needed --
+    -- 'postAction' serialises everything onto one thread by construction.
+    ref <- io $ newIORef s { td_elementmap = m }
+    handleRef <- io $ newIORef Nothing
+    done <- io $ newIORef False
+
+    let redraw = readIORef handleRef >>= mapM_ chRedraw
+
+        -- Tear down once and once only.  The client's own close callback fires
+        -- when the compositor takes the surface away, and a selection closes
+        -- it from this side; both routes land here.
+        finish result = do
+            alreadyDone <- io $ atomicModifyIORef' done (True,)
+            unless alreadyDone $ do
+                io $ readIORef handleRef >>= mapM_ chClose
+                io $ freeGC gc
+                io $ freePixmap frame
+                releaseXMF font
+                cont result
+
+        onKey sym txt = postAction xconf $ whenX (not <$> io (readIORef done)) $ do
+            st <- io (readIORef ref)
+            (nav, st') <- runStateT
+                (unTwoD (gs_navigate gsconfig (fromIntegral sym, txt, 0))) st
+            io $ writeIORef ref st'
+            case nav of
+                Continue -> io redraw
+                Cancel   -> finish Nothing
+                Select a -> finish (Just a)
+
+    h <- io $ startClient ClientSpec
+        { csWidth  = fi (rect_width scr)
+        , csHeight = fi (rect_height scr)
+        , csAnchor = AnchorCentre
+        , csMargin = (0, 0, 0, 0)
+        , csKeyboard = True
+        , csDraw   = renderDrawableInto frame
+        , csOnKey  = onKey
+        , csOnClose = postAction xconf (finish Nothing)
+        }
+    io $ writeIORef handleRef (Just h)
+
+    -- Paint the first frame.  Upstream does this inside evalTwoD just before
+    -- entering the loop; here there is no loop to enter, so it is simply the
+    -- last thing this action does before returning to the event loop.
+    st <- io (readIORef ref)
+    st' <- execStateT (unTwoD updateAllElements) st
+    io $ writeIORef ref st'
+    io redraw
 
 -- | Like `gridSelect' but with the current windows and their titles as elements
-gridselectWindow :: GSConfig Window -> X (Maybe Window)
-gridselectWindow gsconf = windowMap >>= gridselect gsconf
+gridselectWindow :: GSConfig Window -> (Maybe Window -> X ()) -> X ()
+gridselectWindow gsconf cont = windowMap >>= \ws -> gridselect gsconf ws cont
 
 -- | Brings up a 2D grid of windows in the center of the screen, and one can
 -- select a window with cursors keys. The selected window is then passed to
 -- a callback function.
 withSelectedWindow :: (Window -> X ()) -> GSConfig Window -> X ()
-withSelectedWindow callback conf = do
-    mbWindow <- gridselectWindow conf
-    for_ mbWindow callback
+withSelectedWindow callback conf = gridselectWindow conf (`for_` callback)
 
 windowMap :: X [(String,Window)]
 windowMap = do
@@ -716,7 +822,7 @@ decorateName' w = do
 
 -- | Builds a default gs config from a colorizer function.
 buildDefaultGSConfig :: (a -> Bool -> X (String,String)) -> GSConfig a
-buildDefaultGSConfig col = GSConfig 50 130 10 col "xft:Sans-8" defaultNavigation noRearranger (1/2) (1/2) "white" True
+buildDefaultGSConfig col = GSConfig 50 130 10 col "xft:Sans-8" defaultNavigation noRearranger (1/2) (1/2) "white"
 
 -- | Brings selected window to the current workspace.
 bringSelected :: GSConfig Window -> X ()
@@ -731,15 +837,13 @@ goToSelected = withSelectedWindow $ windows . W.focusWindow
 
 -- | Select an application to spawn from a given list
 spawnSelected :: GSConfig String -> [String] -> X ()
-spawnSelected conf lst = gridselect conf (zip lst lst) >>= flip whenJust spawn
+spawnSelected conf lst = gridselect conf (zip lst lst) (`whenJust` spawn)
 
 -- | Select an action and run it in the X monad
 runSelectedAction :: GSConfig (X ()) -> [(String, X ())] -> X ()
-runSelectedAction conf actions = do
-    selectedActionM <- gridselect conf actions
-    case selectedActionM of
-        Just selectedAction -> selectedAction
-        Nothing -> return ()
+runSelectedAction conf actions = gridselect conf actions $ \case
+    Just selectedAction -> selectedAction
+    Nothing -> return ()
 
 -- | Select a workspace and view it using the given function
 -- (normally 'W.view' or 'W.greedyView')
@@ -755,7 +859,7 @@ gridselectWorkspace conf viewFunc = gridselectWorkspace' conf (windows . viewFun
 gridselectWorkspace' :: GSConfig WorkspaceId -> (WorkspaceId -> X ()) -> X ()
 gridselectWorkspace' conf func = withWindowSet $ \ws -> do
     let wss = map W.tag $ W.hidden ws ++ map W.workspace (W.current ws : W.visible ws)
-    gridselect conf (zip wss wss) >>= flip whenJust func
+    gridselect conf (zip wss wss) (`whenJust` func)
 
 -- $rearrangers
 --

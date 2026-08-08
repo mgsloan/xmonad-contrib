@@ -371,6 +371,11 @@ currentTopicDir tg = do
   return . fromMaybe "" . M.lookup topic $ topicDirs tg
 
 -- | Check the given topic configuration for duplicate or undefined topics.
+--
+-- The X11 version reported its findings by spawning @xmessage@, which is an X
+-- client and so is not available here.  Complaints go to stderr instead, and
+-- so to the journal -- the same route every other diagnostic in this backend
+-- takes.
 checkTopicConfig :: [Topic] -> TopicConfig -> IO ()
 checkTopicConfig tags tg = do
   -- tags <- gets $ map W.tag . workspaces . windowset
@@ -379,7 +384,7 @@ checkTopicConfig tags tg = do
     seenTopics = nub $ sort $ M.keys (topicDirs tg) ++ M.keys (topicActions tg)
     dups       = tags \\ nub tags
     diffTopic  = seenTopics \\ sort tags
-    check lst msg = unless (null lst) $ xmessage $ msg ++ " (tags): " ++ show lst
+    check lst msg = unless (null lst) $ trace $ msg ++ " (tags): " ++ show lst
 
   check diffTopic "Seen but missing topics/workspaces"
   check dups      "Duplicate topics/workspaces"

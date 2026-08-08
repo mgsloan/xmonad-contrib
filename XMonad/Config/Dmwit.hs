@@ -197,7 +197,10 @@ instance (PPrint i, PPrint l, PPrint a, PPrint sid, PPrint sd) => PPrint (StackS
 
 instance PPrint (Layout a)
 instance PPrint Int
-instance PPrint XMonad.Screen
+-- No @instance PPrint XMonad.Screen@: that was Xlib's Screen, the server-side
+-- description of a physical screen, and there is nothing corresponding to it
+-- here.  'ScreenId' and 'ScreenDetail', which is what this config actually
+-- prints, are unaffected.
 instance PPrint Integer
 instance PPrint Position
 instance PPrint Dimension

@@ -39,6 +39,7 @@ import XMonad
 import XMonad.Prelude hiding (insert)
 import qualified XMonad.StackSet as W
 import XMonad.Hooks.ManageHelpers (isMinimized)
+import XMonad.River (pointerPosition)
 import XMonad.Util.Stack hiding (Zipper)
 import XMonad.Util.Types
 
@@ -792,11 +793,17 @@ handleResize b (SetGeometry newrect@(Rectangle _ _ w h)) = do
   case W.focus <$> ws of
     Nothing -> return Nothing
     Just win -> do
-      (_,_,_,_,_,mx,my,_) <- withDisplay (\d -> io $ queryPointer d win)
-      let oldrect@(Rectangle _ _ ow oh) = fromMaybe (Rectangle 0 0 0 0) $ lookup win $ getOldRects b
+      -- X11's queryPointer answered relative to the window it was asked about;
+      -- river reports one global position, so the window's own origin comes
+      -- off here.  With no pointer at all -- no seat, or nothing has moved
+      -- yet -- the centre is the honest guess, and it names no edge.
+      ptr <- pointerPosition
+      let oldrect@(Rectangle ox oy ow oh) = fromMaybe (Rectangle 0 0 0 0) $ lookup win $ getOldRects b
       let (xsc,ysc)   = (fi w % fi ow, fi h % fi oh)
           (xsc',ysc') = (rough xsc, rough ysc)
-          dirs = changedDirs oldrect newrect (fi mx,fi my)
+          (mx,my) = maybe (fi ow `div` (2::Int), fi oh `div` 2)
+                          (\(px,py) -> (fi (px - ox), fi (py - oy))) ptr
+          dirs = changedDirs oldrect newrect (mx,my)
           n = elemIndex win $ maybe [] W.integrate $ withoutFloating fs hs ws
       -- unless (isNothing dir) $ debug $
       --       show (fi x-fi ox,fi y-fi oy) ++ show (fi w-fi ow,fi h-fi oh)

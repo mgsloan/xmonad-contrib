@@ -25,6 +25,7 @@ module XMonad.Prelude (
     (!?),
     NonEmpty((:|)),
     notEmpty,
+    safeGetWindowAttributes,
     mkAbsolutePath,
     findM,
 
@@ -48,7 +49,6 @@ module XMonad.Prelude (
     fromList,
 ) where
 
-import Foreign (alloca, peek)
 import XMonad
 
 import Control.Applicative as Exports
@@ -123,6 +123,18 @@ findM p = foldr (\x -> ifM (p x) (pure $ Just x)) (pure Nothing)
 notEmpty :: HasCallStack => [a] -> NonEmpty a
 notEmpty [] = error "unexpected empty list"
 notEmpty (x:xs) = x :| xs
+
+-- | A window's attributes, or 'Nothing' if the answer is unavailable.
+--
+-- X11's version was the safe form of @XGetWindowAttributes@, which failed with
+-- @BadWindow@ for a window that had gone away between the call and the reply.
+-- River answers from what the last layout run decided rather than from a
+-- server, so the failing case is a window it has never placed -- one on a
+-- hidden workspace, or one already unmanaged.  Different cause, same question,
+-- same shape of answer, so every call site survives.
+safeGetWindowAttributes :: Window -> X (Maybe WindowAttributes)
+safeGetWindowAttributes w = withDisplay $ \dpy -> io $
+    handle (\(_ :: SomeException) -> pure Nothing) (Just <$> getWindowAttributes dpy w)
 
 -- | (Naïvely) turn a relative path into an absolute one.
 --

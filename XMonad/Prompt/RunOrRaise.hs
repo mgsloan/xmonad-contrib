@@ -26,6 +26,7 @@ import XMonad.Prelude
 import XMonad.Prompt
 import XMonad.Prompt.Shell
 import XMonad.Actions.WindowGo (runOrRaise)
+import qualified XMonad.Hooks.ManageHelpers as MH
 import XMonad.Util.Run (runProcessWithInput)
 
 import Control.Exception as E
@@ -79,10 +80,11 @@ isApp x = liftA2 (==) pid $ pidof x
 pidof :: String -> Query Int
 pidof x = io $ (runProcessWithInput "pidof" [x] [] >>= readIO) `E.catch` econst 0
 
+-- | The window's client process, or @-1@ when it is unknown.
+--
+-- The X11 version read @_NET_WM_PID@ off the window.  River reports the same
+-- thing as @river_window_v1.unreliable_pid@, which
+-- "XMonad.Hooks.ManageHelpers" already exposes; @-1@ stands in for its
+-- 'Nothing', exactly as it stood in for a missing property before.
 pid :: Query Int
-pid = ask >>= (\w -> liftX $ withDisplay $ \d -> getPID d w)
-    where getPID d w = getAtom "_NET_WM_PID" >>= \a -> io $
-                       fmap getPID' (getWindowProperty32 d a w)
-          getPID' (Just (x:_)) = fromIntegral x
-          getPID' (Just [])    = -1
-          getPID' Nothing      = -1
+pid = maybe (-1) fromIntegral <$> MH.pid

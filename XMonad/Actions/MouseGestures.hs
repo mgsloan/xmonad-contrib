@@ -24,6 +24,7 @@ module XMonad.Actions.MouseGestures (
 
 import XMonad.Prelude
 import XMonad
+import XMonad.River (pointerPosition)
 import XMonad.Util.Types (Direction2D(..))
 
 import Data.IORef
@@ -92,12 +93,12 @@ gauge hook op st nx ny = do
 -- update; when the button is released, it calls @endHook@.
 mouseGestureH :: (Direction2D -> X ()) -> X () -> X ()
 mouseGestureH moveHook endHook = do
-    dpy <- asks display
-    root <- asks theRoot
-    (pos, acc) <- io $ do
-        (_, _, _, ix, iy, _, _, _) <- queryPointer dpy root
-        r <- newIORef Nothing
-        return ((fromIntegral ix, fromIntegral iy), r)
+    -- Where the gesture starts.  X11 asked the server for the root-relative
+    -- pointer position; river reports motion rather than answering, so this is
+    -- the last position it sent -- which, at the moment a button binding
+    -- fires, is where the button was pressed.
+    pos <- fromMaybe (0, 0) <$> pointerPosition
+    acc <- io $ newIORef Nothing
     mouseDrag (gauge moveHook pos acc) endHook
 
 -- | A utility function on top of 'mouseGestureH'. It uses a 'Data.Map.Map' to

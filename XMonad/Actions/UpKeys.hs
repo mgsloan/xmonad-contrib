@@ -1,3 +1,4 @@
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -27,6 +28,7 @@ import qualified Data.Map.Strict as Map
 import XMonad
 import XMonad.Prelude
 import XMonad.Util.EZConfig (mkKeymap)
+import qualified XMonad.River as River
 import qualified XMonad.Util.ExtensibleConf as XC
 
 {- $usage
@@ -137,19 +139,21 @@ instance Semigroup UpKeysConfig where
   UpKeysConfig g u <> UpKeysConfig g' u' = UpKeysConfig (g && g') (u <> u')
 
 -- | Bind actions to keys upon their release.
+-- Two things change here, and they are the same change twice.  A river binding
+-- reports press /and/ release, so there is no event hook to dispatch releases
+-- from -- 'XMonad.River.grabKeysUpDown' takes the release action along with
+-- the key, and river runs it.  And a binding is by keysym, so the @mkGrabs@
+-- round trip through keycodes is gone with the @KeyCode@s it produced.
 useUpKeys :: UpKeysConfig -> (XConfig l -> XConfig l)
 useUpKeys upKeysConf = flip XC.once upKeysConf \conf -> conf
-  { handleEventHook = handleEventHook conf <> (\e -> handleKeyUp e $> All True)
-  , startupHook     = startupHook     conf <> when (grabKeys upKeysConf) grabUpKeys
+  { startupHook = startupHook conf <> when (grabKeys upKeysConf) grabUpKeys
   }
  where
   grabUpKeys :: X ()
   grabUpKeys = do
-    XConf{ display = dpy, theRoot = rootw } <- ask
     realKeys <- maybe mempty upKeys <$> XC.ask @X @UpKeysConfig
-    let grab :: (KeyMask, KeyCode) -> X ()
-        grab (km, kc) = io $ grabKey dpy kc km rootw True grabModeAsync grabModeAsync
-    traverse_ grab =<< mkGrabs (Map.keys realKeys)
+    -- Nothing on the way down: this module is only about the way up.
+    River.grabKeysUpDown (Map.map (pure (),) realKeys)
 
 -- | Parse the given EZConfig-style keys into the internal keymap
 -- representation.
@@ -158,12 +162,7 @@ useUpKeys upKeysConf = flip XC.once upKeysConf \conf -> conf
 ezUpKeys :: XConfig l -> [(String, X ())] -> Map (KeyMask, KeySym) (X ())
 ezUpKeys = mkKeymap
 
--- | A handler for key-up events.
-handleKeyUp :: Event -> X ()
-handleKeyUp KeyEvent{ ev_event_type, ev_state, ev_keycode }
-  | ev_event_type == keyRelease = withDisplay \dpy -> do
-      s   <- io $ keycodeToKeysym dpy ev_keycode 0
-      cln <- cleanMask ev_state
-      ks  <- maybe mempty upKeys <$> XC.ask @X @UpKeysConfig
-      userCodeDef () $ whenJust (ks Map.!? (cln, s)) id
-handleKeyUp _ = pure ()
+-- Upstream also exports @handleKeyUp@, an event hook that turns a @KeyEvent@
+-- with @keyRelease@ into the matching action.  River has no such event and
+-- needs none: the release action is attached to the binding, so it runs
+-- without anything having to recognise it afterwards.

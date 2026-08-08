@@ -26,9 +26,10 @@ import qualified XMonad.Util.ExtensibleState as XS
 import XMonad
 import XMonad.Layout.ShowWName (SWNConfig (..))
 import XMonad.Prelude
-import XMonad.Util.XUtils (WindowConfig (..), showSimpleWindow)
+import XMonad.River (postAction)
+import XMonad.Util.XUtils (WindowConfig (..), deleteWindow, showSimpleWindow)
 
-import Control.Concurrent (threadDelay)
+import Control.Concurrent (forkIO, threadDelay)
 
 {- $usage
 
@@ -60,14 +61,21 @@ showWNameLogHook cfg = do
     XS.put (LastShown foc)
 
 -- | Flash the name of the currently focused workspace.
+--
+-- The X11 version forked a process, opened a /second/ connection to the server
+-- from it, slept, and destroyed the window through that connection.  There is
+-- no second connection to open here -- river permits one window manager -- and
+-- the surface belongs to this one.  So the wait happens on a thread and the
+-- destruction is posted back to the event loop, which is the only thing
+-- allowed to touch the connection.  See 'XMonad.River.postAction'.
 flashName :: SWNConfig -> X ()
 flashName cfg = do
   n <- withWindowSet (pure . W.currentTag)
-  showSimpleWindow cfg' [n] >>= \w -> void . xfork $ do
-    dpy <- openDisplay ""
+  w <- showSimpleWindow cfg' [n]
+  c <- ask
+  void . io . forkIO $ do
     threadDelay (fromEnum $ swn_fade cfg * 1000000) -- 1_000_000 needs GHC 8.6.x and up
-    void $ destroyWindow dpy w
-    closeDisplay dpy
+    postAction c (deleteWindow w)
  where
   cfg' :: WindowConfig
   cfg' = def{ winFont = swn_font cfg, winBg = swn_bgcolor cfg, winFg = swn_color cfg }

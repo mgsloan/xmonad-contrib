@@ -22,8 +22,7 @@ module XMonad.Util.Loggers.NamedScratchpad (-- * Usage
                                            ,nspActive') where
 
 import XMonad.Core
-import Graphics.X11.Xlib (Window)
-import Graphics.X11.Xlib.Extras (Event(..))
+import XMonad.Core (Event(..), Window)
 import XMonad.Util.Loggers (Logger)
 import XMonad.Util.NamedScratchpad (NamedScratchpad(..))
 import qualified XMonad.Util.ExtensibleState as XS
@@ -88,7 +87,12 @@ nspTrackHook :: [NamedScratchpad] -> Event -> X All
 nspTrackHook _ DestroyWindowEvent{ev_window = w} = do
   XS.modify $ \(NSPTrack ws) -> NSPTrack $ map (\sw -> if sw == Just w then Nothing else sw) ws
   return (All True)
-nspTrackHook ns ConfigureRequestEvent{ev_window = w} = do
+-- Upstream re-runs the scratchpad queries on a client's configure request,
+-- which is what a scratchpad sends when it first appears.  River has no such
+-- event: a client asks the compositor for its geometry, not the window
+-- manager.  The window arriving is the moment the check was for, so that is
+-- what this matches instead.
+nspTrackHook ns WindowAdded{ev_window = w} = do
   NSPTrack ws <- XS.get
   ws' <- forM (zip3 [0 :: Integer ..] ws ns) $ \(_,w',NS _ _ q _) -> do
     p <- runQuery q w

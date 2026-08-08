@@ -63,7 +63,7 @@ import           Control.Monad.Reader                    (ask
 import           Control.Monad.State                     (gets)
 import qualified Data.Map                    as M
 
-import           Graphics.X11.Xlib.Extras                (Event(..))
+import           XMonad.Core                             (Event(..))
 
 -- $usage
 -- To use this module, make sure your @xmonad@ core supports generalized

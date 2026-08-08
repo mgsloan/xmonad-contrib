@@ -24,15 +24,13 @@ module XMonad.Layout.LayoutHints
     , layoutHintsToCenter
     , LayoutHints
     , LayoutHintsToCenter
-    , hintsEventHook
     -- * For developers
     , placeRectangle
     )  where
 
 import XMonad(LayoutClass(runLayout), mkAdjust, Window,
               Dimension, Position, Rectangle(Rectangle), D,
-              X, refresh, Event(..), propertyNotify, wM_NORMAL_HINTS,
-              (<&&>), io, applySizeHints, whenX, isClient, withDisplay,
+              applySizeHints, io, withDisplay,
               getWMNormalHints, WindowAttributes(..))
 import XMonad.Prelude
 import qualified XMonad.StackSet as W
@@ -255,19 +253,11 @@ centerPlacement' cf root assigned
     where (cx,cy) = center root
           (cwx,cwy) = center assigned
 
--- | Event hook that refreshes the layout whenever a window changes its hints.
-hintsEventHook :: Event -> X All
-hintsEventHook PropertyEvent{ ev_event_type = t, ev_atom = a, ev_window = w }
-    | t == propertyNotify && a == wM_NORMAL_HINTS = do
-        whenX (isClient w <&&> hintsMismatch w) refresh
-        return (All True)
-hintsEventHook _ = return (All True)
-
--- | True if the window's current size does not satisfy its size hints.
-hintsMismatch :: Window -> X Bool
-hintsMismatch w = safeGetWindowAttributes w >>= \case
-    Nothing -> pure False
-    Just wa -> do
-        sh <- withDisplay $ \d -> io (getWMNormalHints d w)
-        let dim = (fromIntegral $ wa_width wa, fromIntegral $ wa_height wa)
-        return $ dim /= applySizeHints 0 sh dim
+-- Upstream also offers @hintsEventHook@, which refreshes the layout when a
+-- window changes its @WM_NORMAL_HINTS@ property.  There is no such hook here,
+-- and nothing for it to do: river reports new hints as
+-- @river_window_v1.dimensions_hint@ and then runs a manage sequence, so the
+-- layout sees them without being asked.  The X11 version existed because a
+-- property change did not, by itself, make xmonad lay out again.  Its helper
+-- @hintsMismatch@ goes with it: it existed only to decide whether that refresh
+-- was worth doing.

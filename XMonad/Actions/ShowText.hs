@@ -27,14 +27,14 @@ module XMonad.Actions.ShowText
 import Data.Map (Map,empty,insert,lookup)
 import Prelude hiding (lookup)
 import XMonad
-import XMonad.Prelude (All, fi, listToMaybe)
-import XMonad.StackSet (current,screen)
+import XMonad.Prelude (All, fi)
+import XMonad.StackSet (current,screenDetail)
 import XMonad.Util.Font (Align(AlignCenter)
                        , initXMF
                        , releaseXMF
                        , textExtentsXMF
                        , textWidthXMF)
-import XMonad.Util.Timer (startTimer)
+import XMonad.Util.Timer (TimerId, startTimer)
 import XMonad.Util.XUtils (createNewWindow
                          , deleteWindow
                          , showWindow
@@ -56,14 +56,19 @@ import qualified XMonad.Util.ExtensibleState as ES
 --
 
 -- | ShowText contains the map with timers as keys and created windows as values
-newtype ShowText = ShowText (Map Atom Window)
+--
+-- The key was an @Atom@ under X11 only because that is what a timer's identity
+-- travelled as: "XMonad.Util.Timer" delivered expiry as a client message typed
+-- @XMONAD_TIMER@ and carrying the id.  River delivers a 'TimerId' directly, so
+-- the map is keyed on what it was always really keyed on.
+newtype ShowText = ShowText (Map TimerId Window)
     deriving (Read,Show)
 
 instance ExtensionClass ShowText where
     initialValue = ShowText empty
 
 -- | Utility to modify a ShowText
-modShowText :: (Map Atom Window -> Map Atom Window) -> ShowText -> ShowText
+modShowText :: (Map TimerId Window -> Map TimerId Window) -> ShowText -> ShowText
 modShowText f (ShowText m) = ShowText $ f m
 
 data ShowTextConfig =
@@ -85,12 +90,9 @@ instance Default ShowTextConfig where
 
 -- | Handles timer events that notify when a window should be removed
 handleTimerEvent :: Event -> X All
-handleTimerEvent (ClientMessageEvent _ _ _ dis _ mtyp d) = do
+handleTimerEvent (TimerFired u) = do
     (ShowText m) <- ES.get :: X ShowText
-    a <- io $ internAtom dis "XMONAD_TIMER" False
-    if | mtyp == a, Just dh <- listToMaybe d ->
-           whenJust (lookup (fromIntegral dh) m) deleteWindow
-       | otherwise -> pure ()
+    whenJust (lookup u m) deleteWindow
     mempty
 handleTimerEvent _ = mempty
 
@@ -102,20 +104,20 @@ flashText :: ShowTextConfig
 flashText c i s = do
   f <- initXMF (st_font c)
   d <- asks display
-  sc <- gets $ fi . screen . current . windowset
+  -- X11 asked the server for the screen's pixel size; the screen rectangle
+  -- xmonad already holds says the same thing, and says it for the screen the
+  -- current workspace is on rather than for screen zero.
+  sr <- gets $ screenRect . screenDetail . current . windowset
   width <- textWidthXMF d f s
   (as,ds) <- textExtentsXMF f s
   let hight = as + ds
-      ht    = displayHeight d sc
-      wh    = displayWidth d sc
-      y     = (fi ht - hight + 2) `div` 2
-      x     = (fi wh - width + 2) `div` 2
+      y     = rect_y sr + fi ((fi (rect_height sr) - hight + 2) `div` 2)
+      x     = rect_x sr + fi ((fi (rect_width  sr) - width + 2) `div` 2)
   w <- createNewWindow (Rectangle (fi x) (fi y) (fi width) (fi hight))
                       Nothing "" True
   showWindow w
   paintAndWrite w f (fi width) (fi hight) 0 (st_bg c) ""
                 (st_fg c) (st_bg c) [AlignCenter] [s]
   releaseXMF f
-  io $ sync d False
   t <- startTimer i
-  ES.modify $ modShowText (insert (fromIntegral t) w)
+  ES.modify $ modShowText (insert t w)

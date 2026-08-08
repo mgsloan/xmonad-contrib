@@ -34,17 +34,12 @@ module XMonad.Hooks.DynamicLog (
     -- $usage
 
     -- * Drop-in loggers
-    xmobarProp,
     xmobar,
     statusBar,
     dzen,
     dzenWithFlags,
     dynamicLog,
     dynamicLogXinerama,
-
-    xmonadPropLog,
-    xmonadPropLog',
-    xmonadDefProp,
 
     -- * Build your own formatter
     dynamicLogWithPP,
@@ -161,7 +156,7 @@ dzenWithFlags :: LayoutClass l Window
               => String     -- ^ Flags to give to @dzen@
               -> XConfig l  -- ^ The base config
               -> IO (XConfig (ModifiedLayout AvoidStruts l))
-dzenWithFlags flags = statusBar ("dzen2 " ++ flags) dzenPP toggleStrutsKey
+dzenWithFlags flags = statusBar ("dzen2 " ++ flags) dzenPP
 
 -- | Run xmonad with a dzen status bar set to some nice defaults.
 --
@@ -180,32 +175,28 @@ dzen = dzenWithFlags flags
     bg      = "'#3f3c6d'"
     flags   = "-e 'onstart=lower' -dock -w 400 -ta l -fg " ++ fg ++ " -bg " ++ bg
 
--- | This function works like 'xmobarProp', but uses pipes instead of
--- property-based logging.
+-- | Run xmonad with an xmobar status bar set to some nice defaults, logging to
+-- it through a pipe.
 xmobar :: LayoutClass l Window
        => XConfig l  -- ^ The base config
        -> IO (XConfig (ModifiedLayout AvoidStruts l))
-xmobar = statusBar "xmobar" xmobarPP toggleStrutsKey
+xmobar = statusBar "xmobar" xmobarPP
 
--- | Like 'statusBarProp', but uses pipes instead of property-based logging.
--- Only use this function if your status bar does not support reading from a
--- property of the root window.
+-- | A status bar logged to through a pipe on its standard input.
+--
+-- The upstream version also took a key binding to toggle the bar's struts.
+-- There is nothing here to toggle: the exclusive zone a bar reserves is
+-- negotiated between the bar and the compositor, and the window manager is
+-- told the result rather than deciding it.  See "XMonad.Hooks.ManageDocks" for
+-- why @ToggleStruts@, @withEasySB@ and @defToggleStrutsKey@ are all absent.
 statusBar :: LayoutClass l Window
           => String    -- ^ The command line to launch the status bar
           -> PP        -- ^ The pretty printing options
-          -> (XConfig Layout -> (KeyMask, KeySym))
-                       -- ^ The desired key binding to toggle bar visibility
           -> XConfig l -- ^ The base config
           -> IO (XConfig (ModifiedLayout AvoidStruts l))
-statusBar cmd pp k conf= do
+statusBar cmd pp conf = do
   sb <- statusBarPipe cmd (pure pp)
-  return $ withEasySB sb k conf
-
--- |
--- Helper function which provides ToggleStruts keybinding
---
-toggleStrutsKey :: XConfig t -> (KeyMask, KeySym)
-toggleStrutsKey = defToggleStrutsKey
+  return . withSB sb . docks $ conf { layoutHook = avoidStruts (layoutHook conf) }
 
 -- | An example log hook, which prints status information to stdout in
 -- the default format:
@@ -240,27 +231,7 @@ dynamicLog = dynamicLogWithPP def
 dynamicLogXinerama :: X ()
 dynamicLogXinerama = withWindowSet $ io . putStrLn . pprWindowSetXinerama
 
--- | Run xmonad with a property-based xmobar status bar set to some nice
--- defaults.
---
--- > main = xmonad $ xmobarProp myConfig
--- >
--- > myConfig = def { ... }
---
--- The intent is that the above config file should provide a nice
--- status bar with minimal effort. Note that you still need to configure
--- xmobar to use the @XMonadLog@ plugin instead of the default @StdinReader@,
--- see above.
---
--- If you wish to customize the status bar format at all, use the modernized
--- interface provided by the "XMonad.Hooks.StatusBar" and
--- "XMonad.Hooks.StatusBar.PP" modules instead.
---
--- The binding uses the "XMonad.Hooks.ManageDocks" module to automatically
--- handle screen placement for xmobar, and enables 'mod-b' for toggling
--- the menu bar.
-xmobarProp :: LayoutClass l Window
-           => XConfig l  -- ^ The base config
-           -> XConfig (ModifiedLayout AvoidStruts l)
-xmobarProp =
-  withEasySB (statusBarProp "xmobar" (pure xmobarPP)) toggleStrutsKey
+-- Upstream also offers @xmobarProp@, which logs to the @_XMONAD_LOG@ property
+-- of the X root window rather than to a pipe.  Wayland has neither a root
+-- window nor properties, so it is not here; 'xmobar' above does the same job
+-- through a pipe.  See "XMonad.Hooks.StatusBar" for the details.

@@ -96,8 +96,10 @@ positionStoreInit mDecoTheme w  = withDisplay $ \d -> withWindowAttributes d w $
         randomIntOffset = io $ randomRIO (42, 242)
 
 positionStoreEventHook :: Event -> X All
-positionStoreEventHook DestroyWindowEvent{ev_window = w, ev_event_type = et} = do
-    when (et == destroyNotify) $
-        modifyPosStore (`posStoreRemove` w)
+-- X11 delivered destroy and unmap through the same event struct, so the type
+-- had to be checked before believing the window was gone.  River has one event
+-- and it means one thing, so there is nothing left to check.
+positionStoreEventHook DestroyWindowEvent{ev_window = w} = do
+    modifyPosStore (`posStoreRemove` w)
     return (All True)
 positionStoreEventHook _ = return (All True)

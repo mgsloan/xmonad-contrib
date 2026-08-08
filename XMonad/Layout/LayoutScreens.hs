@@ -62,9 +62,8 @@ import qualified XMonad.StackSet as W
 -- | Modify all screens.
 layoutScreens :: LayoutClass l Int => Int -> l Int -> X ()
 layoutScreens nscr _ | nscr < 1 = trace $ "Can't layoutScreens with only " ++ show nscr ++ " screens."
-layoutScreens nscr l = asks theRoot >>= \w -> withDisplay $ \d ->
-  withWindowAttributes d w $ \attrs ->
-    do let rtrect = windowRectangle attrs
+layoutScreens nscr l = withDisplay $ \d ->
+    do rtrect <- boundingRect <$> getCleanedScreenInfo d
        (wss, _) <- runLayout (W.Workspace "" l (Just $ W.Stack { W.focus=1, W.up=[],W.down=[1..nscr-1] })) rtrect
        windows $ \ws@W.StackSet{ W.current = v, W.visible = vs, W.hidden = hs } ->
            let x = W.workspace v
@@ -89,9 +88,20 @@ layoutSplitScreen nscr l =
                                 map (\v -> if W.screen v>W.screen c then v{W.screen = W.screen v + fromIntegral (nscr-1)} else v) vs
                   , W.hidden  = ys }
 
-windowRectangle :: WindowAttributes -> Rectangle
-windowRectangle a = Rectangle (fromIntegral $ wa_x a)     (fromIntegral $ wa_y a)
-                              (fromIntegral $ wa_width a) (fromIntegral $ wa_height a)
+-- | The area every screen together covers.
+--
+-- This is what the X11 version got from the root window's geometry, which was
+-- exactly the union of the screens.  Wayland has no root window, so the union
+-- is taken directly; an empty list cannot happen with a compositor attached,
+-- and a zero rectangle is the harmless answer if it somehow does.
+boundingRect :: [Rectangle] -> Rectangle
+boundingRect [] = Rectangle 0 0 0 0
+boundingRect rs = Rectangle x0 y0 (fromIntegral (x1 - x0)) (fromIntegral (y1 - y0))
+  where
+    x0 = minimum [ rect_x r | r <- rs ]
+    y0 = minimum [ rect_y r | r <- rs ]
+    x1 = maximum [ rect_x r + fromIntegral (rect_width  r) | r <- rs ]
+    y1 = maximum [ rect_y r + fromIntegral (rect_height r) | r <- rs ]
 
 newtype FixedLayout a = FixedLayout [Rectangle] deriving (Read,Show)
 

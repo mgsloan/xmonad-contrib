@@ -26,6 +26,7 @@ import qualified Data.List.NonEmpty as NE (nonEmpty)
 import qualified Data.Map as M
 import XMonad
 import XMonad.Prelude (NonEmpty ((:|)), when)
+import XMonad.River (restackWindows)
 import qualified XMonad.StackSet as S
 import qualified XMonad.Util.ExtensibleState as XS
 
@@ -47,7 +48,7 @@ instance ExtensionClass CWOTState where
   initialValue = CWOTS ""
 
 currentWorkspaceOnTop :: X ()
-currentWorkspaceOnTop = withDisplay $ \d -> do
+currentWorkspaceOnTop = do
     ws <- gets windowset
     (CWOTS lastTag) <- XS.get
     let curTag = S.tag . S.workspace . S.current $ ws
@@ -66,7 +67,10 @@ currentWorkspaceOnTop = withDisplay $ \d -> do
 
         case NE.nonEmpty wins of
             Nothing         -> pure ()
-            Just (w :| ws') -> do
-                io $ raiseWindow d w            -- raise first window of current workspace to the very top,
-                io $ restackWindows d (w : ws') -- then use restackWindows to let all other windows from the workspace follow
+            Just (w :| ws') ->
+                -- One call, not two: river's restack is a standing request
+                -- that the render sequence re-applies, so raising the head
+                -- separately would only be undone by the list that follows.
+                -- See 'XMonad.River.restackWindows'.
+                restackWindows (w : ws')
         XS.put(CWOTS curTag)

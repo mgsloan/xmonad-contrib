@@ -15,7 +15,8 @@
 -- external status bar program such as xmobar or dzen.
 --
 -- This module provides a composable interface for (re)starting these status
--- bars and logging to them, either using pipes or X properties. There's also
+-- bars and logging to them through a pipe.  (Upstream also offers logging to
+-- an X root window property; see "No property logging" below.)  There's also
 -- "XMonad.Hooks.StatusBar.PP" which provides an abstraction and some
 -- utilities for customization what is logged to a status bar. Together, these
 -- are a modern replacement for "XMonad.Hooks.DynamicLog", which is now just a
@@ -31,8 +32,6 @@ module XMonad.Hooks.StatusBar (
 
   -- * Available Configs
   -- $availableconfigs
-  statusBarProp,
-  statusBarPropTo,
   statusBarGeneric,
   statusBarPipe,
 
@@ -44,10 +43,8 @@ module XMonad.Hooks.StatusBar (
   dynamicSBs,
   dynamicEasySBs,
 
-  -- * Property Logging utilities
-  xmonadPropLog,
-  xmonadPropLog',
-  xmonadDefProp,
+  -- * No property logging
+  -- $noprop
 
   -- * Managing status bar Processes
   -- $sbprocess
@@ -59,13 +56,10 @@ module XMonad.Hooks.StatusBar (
 
 import Control.Exception (SomeException, try)
 import Data.IORef (newIORef, readIORef, writeIORef)
-import qualified Codec.Binary.UTF8.String as UTF8 (encode)
 import qualified Data.Map as M
 import System.IO (hClose)
 import System.Posix.Signals (sigTERM, signalProcessGroup)
 import System.Posix.Types (ProcessID)
-
-import Foreign.C (CChar)
 
 import XMonad
 import XMonad.Prelude
@@ -86,19 +80,23 @@ import qualified XMonad.StackSet as W
 -- > import XMonad.Hooks.StatusBar
 -- > import XMonad.Hooks.StatusBar.PP
 --
--- The easiest way to use this module with xmobar, as well as any other
--- status bar that supports property logging, is to use 'statusBarProp'
--- with 'withSB'; it takes care of the necessary plumbing:
+-- The way to use this module is 'statusBarPipe' with 'withSB'; it takes care
+-- of the necessary plumbing.  The bar reads what xmonad logs on its standard
+-- input:
 --
--- > mySB = statusBarProp "xmobar" (pure xmobarPP)
--- > main = xmonad $ withSB mySB def
+-- > main = do
+-- >   mySB <- statusBarPipe "xmobar" (pure xmobarPP)
+-- >   xmonad $ withSB mySB def
 --
--- You can read more about X11 properties
--- [here](https://en.wikipedia.org/wiki/X_Window_System_core_protocol#Properties)
--- or
--- [here](https://tronche.com/gui/x/xlib/window-information/properties-and-atoms.html),
--- although you don't have to understand them in order to use the functions
--- mentioned above.
+-- For xmobar this means the @StdinReader@ plugin in your @.xmobarrc@:
+--
+-- > Config { ...
+-- >        , commands = [ Run StdinReader, ... ]
+-- >        , template = "%StdinReader% }{ ..."
+-- >        }
+--
+-- Note that 'statusBarPipe' returns @IO StatusBarConfig@, which is why it is
+-- bound in @main@ rather than written inline.
 --
 -- Most users will, however, want to customize the logging and integrate it
 -- into their existing custom xmonad configuration. The 'withSB'
@@ -107,44 +105,13 @@ import qualified XMonad.StackSet as W
 -- to configure "XMonad.Hooks.ManageDocks" yourself. Here's what that might
 -- look like:
 --
--- > mySB = statusBarProp "xmobar" (pure myPP)
--- > main = xmonad . withSB mySB . ewmh . docks $ def {...}
---
--- You then have to tell your status bar to read from the @_XMONAD_LOG@ property
--- of the root window.  In the case of xmobar, this is achieved by simply using
--- the @XMonadLog@ plugin instead of @StdinReader@ in your @.xmobarrc@:
---
--- > Config { ...
--- >        , commands = [ Run XMonadLog, ... ]
--- >        , template = "%XMonadLog% }{ ..."
--- >        }
---
--- If you don't have an @.xmobarrc@, create it; the @XMonadLog@ plugin is not
--- part of the default xmobar configuration and your status bar will not show
--- workspace information otherwise!
---
--- With 'statusBarProp', you need to use property logging. Make sure the
--- status bar you use supports reading a property string from the root window,
--- or use some kind of wrapper that reads the property and pipes it into the
--- bar (e.g. @xmonadpropread | dzen2@, see @scripts/xmonadpropread.hs@). The
--- default property is @_XMONAD_LOG@, which is conveniently saved in 'xmonadDefProp'.
--- You can use another property by using the function 'statusBarPropTo'.
---
--- If your status bar does not support property-based logging, you may also try
--- 'statusBarPipe'.
--- It can be used in the same way as 'statusBarProp' above (for xmobar, you now
--- have to use the @StdinReader@ plugin in your @.xmobarrc@).  Instead of
--- writing to a property, this function opens a pipe and makes the given status
--- bar read from that pipe.
--- Please be aware that this kind of setup is very bug-prone and hence is
--- discouraged: if anything goes wrong with the bar, xmonad will freeze!
---
--- Also note that 'statusBarPipe' returns 'IO StatusBarConfig', so
--- you need to evaluate it before passing it to 'withSB':
---
 -- > main = do
 -- >   mySB <- statusBarPipe "xmobar" (pure myPP)
--- >   xmonad $ withSB mySB myConf
+-- >   xmonad . withSB mySB . docks $ def {...}
+--
+-- Please be aware that a pipe is bug-prone: if anything goes wrong with the
+-- bar, xmonad will freeze.  Upstream offers property-based logging as the
+-- alternative; see "No property logging" below for why that is not here.
 
 
 -- $plumbing
@@ -152,64 +119,30 @@ import qualified XMonad.StackSet as W
 -- you can also add all of the necessary plumbing yourself (the source of
 -- 'withSB' might come in handy here).
 --
--- 'xmonadPropLog' allows you to write a string to the @_XMONAD_LOG@ property of
--- the root window.  Together with 'dynamicLogString', you can now simply set
--- your 'logHook' to the appropriate function; for instance:
+-- 'XMonad.Hooks.StatusBar.PP.dynamicLogString' renders the current state, and
+-- what you do with the resulting string is up to you.  Note that setting
+-- 'logHook' only sets up xmonad's output; you are responsible for starting
+-- your own status bar program and making sure it reads what xmonad writes.  To
+-- start your bar, simply put it into your 'startupHook'.  You will also have
+-- to add 'docks' and 'avoidStruts' to your config.
 --
--- > main = xmonad $ def {
--- >    ...
--- >    , logHook = xmonadPropLog =<< dynamicLogString myPP
--- >    ...
--- >    }
---
--- If you want to define your own property name, use 'xmonadPropLog'' instead of
--- 'xmonadPropLog'.
---
--- If you just want to use the default pretty-printing format, you can replace
--- @myPP@ with 'def' in the above 'logHook'.
---
--- Note that setting 'logHook' only sets up xmonad's output; you are
--- responsible for starting your own status bar program and making sure it reads
--- from the property that xmonad writes to.  To start your bar, simply put it
--- into your 'startupHook'.  You will also have also have to add 'docks' and
--- 'avoidStruts' to your config.  Putting all of this together would look
--- something like
---
--- > import XMonad.Util.SpawnOnce (spawnOnce)
--- > import XMonad.Hooks.ManageDocks (avoidStruts, docks)
--- >
--- > main = do
--- >     xmonad $ docks $ def {
--- >       ...
--- >       , logHook     = xmonadPropLog =<< dynamicLogString myPP
--- >       , startupHook = spawnOnce "xmobar"
--- >       , layoutHook  = avoidStruts myLayout
--- >       ...
--- >       }
--- > myPP = def { ... }
--- > myLayout = ...
---
--- If you want a keybinding to toggle your bar, you will also need to add this
--- to the rest of your keybindings.
---
--- The above has the problem that xmobar will not get restarted whenever you
--- restart xmonad ('XMonad.Util.SpawnOnce.spawnOnce' will simply prevent your
--- chosen status bar from spawning again). Using 'statusBarProp', however, takes
--- care of the necessary plumbing /and/ keeps track of the started status bars, so
--- they can be correctly restarted with xmonad. This is achieved using
--- 'spawnStatusBar' to start them and 'killStatusBar' to kill
--- previously started bars.
+-- Doing that by hand has the problem that the bar will not get restarted
+-- whenever you restart xmonad ('XMonad.Util.SpawnOnce.spawnOnce' will simply
+-- prevent your chosen status bar from spawning again).  'statusBarPipe' takes
+-- care of the necessary plumbing /and/ keeps track of the started status bars,
+-- so they can be correctly restarted with xmonad.  This is achieved using
+-- 'spawnStatusBar' to start them and 'killStatusBar' to kill previously
+-- started bars.
 --
 -- Even if you don't use a status bar, you can still use 'dynamicLogString' to
 -- show on-screen notifications in response to some events. For example, to show
 -- the current layout when it changes, you could make a keybinding to cycle the
 -- layout and display the current status:
 --
--- > ((mod1Mask, xK_a), sendMessage NextLayout >> (dynamicLogString myPP >>= xmessage))
+-- > ((mod1Mask, xK_a), sendMessage NextLayout >> (dynamicLogString myPP >>= trace))
 --
--- If you use a status bar that does not support reading from a property
--- (like dzen), and you don't want to use the 'statusBar' function, you can,
--- again, also manually add all of the required components, like this:
+-- If you don't want to use the 'statusBar' function, you can, again, also
+-- manually add all of the required components, like this:
 --
 -- > import XMonad.Util.Run (hPutStrLn, spawnPipe)
 -- >
@@ -232,7 +165,7 @@ import qualified XMonad.StackSet as W
 
 
 -- | This datataype abstracts a status bar to provide a common interface
--- functions like 'statusBarPipe' or 'statusBarProp'. Once defined, a status
+-- functions like 'statusBarPipe'. Once defined, a status
 -- bar can be incorporated in 'XConfig' by using 'withSB' or
 -- which takes care of the necessary plumbing.
 data StatusBarConfig = StatusBarConfig  { sbLogHook     :: X ()
@@ -275,31 +208,33 @@ withSB (StatusBarConfig lh sh ch) conf = conf
 -- Using this function multiple times to combine status bars may result in
 -- only one status bar working properly. See the section on using multiple
 -- status bars for more details.
--- | Creates a 'StatusBarConfig' that uses property logging to @_XMONAD_LOG@, which
--- is set in 'xmonadDefProp'
-statusBarProp :: String -- ^ The command line to launch the status bar
-              -> X PP   -- ^ The pretty printing options
-              -> StatusBarConfig
-statusBarProp = statusBarPropTo xmonadDefProp
-
--- | Like 'statusBarProp', but lets you define the property
-statusBarPropTo :: String -- ^ Property to write the string to
-                -> String -- ^ The command line to launch the status bar
-                -> X PP   -- ^ The pretty printing options
-                -> StatusBarConfig
-statusBarPropTo prop cmd pp = statusBarGeneric cmd $
-    xmonadPropLog' prop =<< dynamicLogString =<< pp
+-- $noprop
+-- Upstream also offers @statusBarProp@, @statusBarPropTo@, @xmonadPropLog@,
+-- @xmonadPropLog'@ and @xmonadDefProp@.  Those log by writing a string to a
+-- property -- @_XMONAD_LOG@ by default -- on the X root window, for a bar
+-- configured to read it: xmobar's @XMonadLog@ plugin, and the
+-- @scripts\/xmonadpropread.hs@ wrapper for bars without one.
+--
+-- Wayland has no root window and no properties, and river offers nothing in
+-- their place, so none of them are here.  'statusBarPipe' is the way to log,
+-- and it is the way that ports: the bar reads its input on stdin.  A config
+-- saying
+--
+-- > mySB = statusBarProp "xmobar" (pure xmobarPP)
+-- > main = xmonad $ withSB mySB def
+--
+-- becomes
+--
+-- > main = do
+-- >   mySB <- statusBarPipe "xmobar" (pure xmobarPP)
+-- >   xmonad $ withSB mySB def
+--
+-- and the bar's configuration changes from @XMonadLog@ to @StdinReader@.
 
 -- | A generic 'StatusBarConfig' that launches a status bar but takes a
 -- generic @X ()@ logging function instead of a 'PP'. This has several uses:
 --
--- * With 'xmonadPropLog' or 'xmonadPropLog'' in the logging function, a
---   custom non-'PP'-based logger can be used for logging into an @xmobar@.
---
--- * With 'mempty' as the logging function, it's possible to manage a status
---   bar that reads information from EWMH properties like @taffybar@.
---
--- * With 'mempty' as the logging function, any other dock like @trayer@ or
+-- * With 'mempty' as the logging function, any dock like @trayer@ or
 --   @stalonetray@ can be managed by this module.
 statusBarGeneric :: String -- ^ The command line to launch the status bar
                  -> X ()   -- ^ What and how to log to the status bar ('sbLogHook')
@@ -310,7 +245,8 @@ statusBarGeneric cmd lh = def
     , sbCleanupHook = killStatusBar cmd
     }
 
--- | Like 'statusBarProp', but uses pipe-based logging instead.
+-- | A 'StatusBarConfig' that launches a status bar and logs to it through a
+-- pipe on its standard input.
 statusBarPipe :: String -- ^ The command line to launch the status bar
               -> X PP   -- ^ The pretty printing options
               -> IO StatusBarConfig
@@ -336,26 +272,14 @@ statusBarPipe cmd xpp = do
 -- bars may look like:
 --
 -- > -- Make sure to setup the xmobar configs accordingly
--- > xmobarTop    = statusBarPropTo "_XMONAD_LOG_1" "xmobar -x 0 ~/.config/xmobar/xmobarrc_top"    (pure ppTop)
--- > xmobarBottom = statusBarPropTo "_XMONAD_LOG_2" "xmobar -x 0 ~/.config/xmobar/xmobarrc_bottom" (pure ppBottom)
--- > xmobar1      = statusBarPropTo "_XMONAD_LOG_3" "xmobar -x 1 ~/.config/xmobar/xmobarrc1"       (pure pp1)
--- >
--- > main = xmonad $ withSB (xmobarTop <> xmobarBottom <> xmobar1) myConfig
+-- > main = do
+-- >   xmobarTop    <- statusBarPipe "xmobar -x 0 ~/.config/xmobar/xmobarrc_top"    (pure ppTop)
+-- >   xmobarBottom <- statusBarPipe "xmobar -x 0 ~/.config/xmobar/xmobarrc_bottom" (pure ppBottom)
+-- >   xmobar1      <- statusBarPipe "xmobar -x 1 ~/.config/xmobar/xmobarrc1"       (pure pp1)
+-- >   xmonad $ withSB (xmobarTop <> xmobarBottom <> xmobar1) myConfig
 --
--- And here is an example of the related xmobar configuration for the multiple
--- status bars mentioned above:
---
--- > xmobarrc_top
--- > Config { ...
--- >        , commands = [ Run XPropertyLog "_XMONAD_LOG_1", ... ]
--- >        , template = "%_XMONAD_LOG_1% }{ ..."
--- >        }
---
--- The above example also works if the different status bars support different
--- logging methods: you could mix property logging and logging via pipes.
--- One thing to keep in mind is that if multiple bars read from the same
--- property, their content will be the same. If you want to use property-based
--- logging with multiple bars, they should read from different properties.
+-- Each bar has its own pipe, so each gets its own content; every one of them
+-- reads its input on stdin.
 --
 -- "XMonad.Util.Loggers" includes loggers that can be bound to specific screens,
 -- like 'logCurrentOnScreen', that might be useful with multiple screens.
@@ -391,16 +315,15 @@ statusBarPipe cmd xpp = do
 -- status bars, it takes care of setting up the event hook, the log hook
 -- and the startup hook necessary to make the status bars, well, dynamic.
 --
--- > xmobarTop    = statusBarPropTo "_XMONAD_LOG_1" "xmobar -x 0 ~/.config/xmobar/xmobarrc_top"    (pure ppTop)
--- > xmobarBottom = statusBarPropTo "_XMONAD_LOG_2" "xmobar -x 0 ~/.config/xmobar/xmobarrc_bottom" (pure ppBottom)
--- > xmobar1      = statusBarPropTo "_XMONAD_LOG_3" "xmobar -x 1 ~/.config/xmobar/xmobarrc1"       (pure pp1)
--- >
--- > barSpawner :: ScreenId -> StatusBarConfig
--- > barSpawner 0 = xmobarTop <> xmobarBottom -- two bars on the main screen
--- > barSpawner 1 = xmobar1
+-- > barSpawner :: ScreenId -> IO StatusBarConfig
+-- > barSpawner 0 = do -- two bars on the main screen
+-- >   top    <- statusBarPipe "xmobar -x 0 ~/.config/xmobar/xmobarrc_top"    (pure ppTop)
+-- >   bottom <- statusBarPipe "xmobar -x 0 ~/.config/xmobar/xmobarrc_bottom" (pure ppBottom)
+-- >   pure (top <> bottom)
+-- > barSpawner 1 = statusBarPipe "xmobar -x 1 ~/.config/xmobar/xmobarrc1" (pure pp1)
 -- > barSpawner _ = mempty -- nothing on the rest of the screens
 -- >
--- > main = xmonad $ dynamicSBs (pure . barSpawner) (def { ... })
+-- > main = xmonad $ dynamicSBs (io . barSpawner) (def { ... })
 --
 -- Make sure you specify which screen to place the status bar on (in xmobar,
 -- this is achieved by the @-x@ argument). In addition to making sure that your
@@ -462,28 +385,6 @@ logSBs = XS.get >>= traverse_ (sbLogHook . snd) . getASBs
 cleanSBs :: [StatusBarConfig] -> X ()
 cleanSBs = traverse_ sbCleanupHook
 
--- | The default property xmonad writes to. (@_XMONAD_LOG@).
-xmonadDefProp :: String
-xmonadDefProp = "_XMONAD_LOG"
-
--- | Write a string to the @_XMONAD_LOG@ property on the root window.
-xmonadPropLog :: String -> X ()
-xmonadPropLog = xmonadPropLog' xmonadDefProp
-
--- | Write a string to a property on the root window.  This property is of type
--- @UTF8_STRING@.
-xmonadPropLog' :: String  -- ^ Property name
-               -> String  -- ^ Message to be written to the property
-               -> X ()
-xmonadPropLog' prop msg = do
-    d <- asks display
-    r <- asks theRoot
-    xlog <- getAtom prop
-    ustring <- getAtom "UTF8_STRING"
-    io $ changeProperty8 d r xlog ustring propModeReplace (encodeCChar msg)
- where
-    encodeCChar :: String -> [CChar]
-    encodeCChar = map fromIntegral . UTF8.encode
 
 
 -- This newtype wrapper, together with the ExtensionClass instance make use of
